@@ -10,7 +10,8 @@
  */
 #include <stdlib.h>
 
-#include "./aom_dsp_rtcd.h"
+#include "config/aom_dsp_rtcd.h"
+
 #include "aom_ports/mem.h"
 
 // src_diff: first pass, 9 bit, dynamic range [-255, 255]
@@ -112,51 +113,6 @@ int aom_satd_c(const int16_t *coeff, int length) {
   return satd;
 }
 
-// Integer projection onto row vectors.
-// height: value range {16, 32, 64}.
-void aom_int_pro_row_c(int16_t hbuf[16], const uint8_t *ref, int ref_stride,
-                       int height) {
-  int idx;
-  const int norm_factor = height >> 1;
-  for (idx = 0; idx < 16; ++idx) {
-    int i;
-    hbuf[idx] = 0;
-    // hbuf[idx]: 14 bit, dynamic range [0, 16320].
-    for (i = 0; i < height; ++i) hbuf[idx] += ref[i * ref_stride];
-    // hbuf[idx]: 9 bit, dynamic range [0, 510].
-    hbuf[idx] /= norm_factor;
-    ++ref;
-  }
-}
-
-// width: value range {16, 32, 64}.
-int16_t aom_int_pro_col_c(const uint8_t *ref, int width) {
-  int idx;
-  int16_t sum = 0;
-  // sum: 14 bit, dynamic range [0, 16320]
-  for (idx = 0; idx < width; ++idx) sum += ref[idx];
-  return sum;
-}
-
-// ref: [0 - 510]
-// src: [0 - 510]
-// bwl: {2, 3, 4}
-int aom_vector_var_c(const int16_t *ref, const int16_t *src, int bwl) {
-  int i;
-  int width = 4 << bwl;
-  int sse = 0, mean = 0, var;
-
-  for (i = 0; i < width; ++i) {
-    int diff = ref[i] - src[i];  // diff: dynamic range [-510, 510], 10 bits.
-    mean += diff;                // mean: dynamic range 16 bits.
-    sse += diff * diff;          // sse:  dynamic range 26 bits.
-  }
-
-  // (mean * mean): dynamic range 31 bits.
-  var = sse - ((mean * mean) >> (bwl + 2));
-  return var;
-}
-
 void aom_minmax_8x8_c(const uint8_t *src, int src_stride, const uint8_t *ref,
                       int ref_stride, int *min, int *max) {
   int i, j;
@@ -171,7 +127,6 @@ void aom_minmax_8x8_c(const uint8_t *src, int src_stride, const uint8_t *ref,
   }
 }
 
-#if CONFIG_HIGHBITDEPTH
 void aom_highbd_minmax_8x8_c(const uint8_t *s8, int p, const uint8_t *d8,
                              int dp, int *min, int *max) {
   int i, j;
@@ -187,4 +142,3 @@ void aom_highbd_minmax_8x8_c(const uint8_t *s8, int p, const uint8_t *d8,
     }
   }
 }
-#endif  // CONFIG_HIGHBITDEPTH

@@ -11,7 +11,8 @@
 
 #include "third_party/googletest/src/googletest/include/gtest/gtest.h"
 
-#include "./av1_rtcd.h"
+#include "config/av1_rtcd.h"
+
 #include "test/acm_random.h"
 #include "test/clear_system_state.h"
 #include "test/register_state_check.h"
@@ -22,14 +23,14 @@
 
 namespace {
 
-using std::tr1::tuple;
+using ::testing::tuple;
 using libaom_test::ACMRandom;
 
 typedef void (*HbdHtFunc)(const int16_t *input, int32_t *output, int stride,
-                          int tx_type, int bd);
+                          TX_TYPE tx_type, int bd);
 
 typedef void (*IHbdHtFunc)(const int32_t *coeff, uint16_t *output, int stride,
-                           int tx_type, int bd);
+                           TX_TYPE tx_type, int bd);
 
 // Test parameter argument list:
 //   <transform reference function,
@@ -38,7 +39,7 @@ typedef void (*IHbdHtFunc)(const int32_t *coeff, uint16_t *output, int stride,
 //    num_coeffs,
 //    tx_type,
 //    bit_depth>
-typedef tuple<HbdHtFunc, IHbdHtFunc, IHbdHtFunc, int, int, int> IHbdHtParam;
+typedef tuple<HbdHtFunc, IHbdHtFunc, IHbdHtFunc, int, TX_TYPE, int> IHbdHtParam;
 
 class AV1HighbdInvHTNxN : public ::testing::TestWithParam<IHbdHtParam> {
  public:
@@ -88,6 +89,8 @@ class AV1HighbdInvHTNxN : public ::testing::TestWithParam<IHbdHtParam> {
       return 16;
     } else if (1024 == num_coeffs_) {
       return 32;
+    } else if (4096 == num_coeffs_) {
+      return 64;
     } else {
       return 0;
     }
@@ -97,7 +100,7 @@ class AV1HighbdInvHTNxN : public ::testing::TestWithParam<IHbdHtParam> {
   IHbdHtFunc inv_txfm_;
   IHbdHtFunc inv_txfm_ref_;
   int num_coeffs_;
-  int tx_type_;
+  TX_TYPE tx_type_;
   int bit_depth_;
 
   int16_t *input_;
@@ -133,20 +136,21 @@ void AV1HighbdInvHTNxN::RunBitexactCheck() {
 
 TEST_P(AV1HighbdInvHTNxN, InvTransResultCheck) { RunBitexactCheck(); }
 
-using std::tr1::make_tuple;
+using ::testing::make_tuple;
 
-#if HAVE_SSE4_1 && CONFIG_HIGHBITDEPTH
+#if HAVE_SSE4_1
 #define PARAM_LIST_4X4                                   \
   &av1_fwd_txfm2d_4x4_c, &av1_inv_txfm2d_add_4x4_sse4_1, \
       &av1_inv_txfm2d_add_4x4_c, 16
-
 #define PARAM_LIST_8X8                                   \
   &av1_fwd_txfm2d_8x8_c, &av1_inv_txfm2d_add_8x8_sse4_1, \
       &av1_inv_txfm2d_add_8x8_c, 64
-
 #define PARAM_LIST_16X16                                     \
   &av1_fwd_txfm2d_16x16_c, &av1_inv_txfm2d_add_16x16_sse4_1, \
       &av1_inv_txfm2d_add_16x16_c, 256
+#define PARAM_LIST_64X64                                     \
+  &av1_fwd_txfm2d_64x64_c, &av1_inv_txfm2d_add_64x64_sse4_1, \
+      &av1_inv_txfm2d_add_64x64_c, 4096
 
 const IHbdHtParam kArrayIhtParam[] = {
   // 16x16
@@ -158,7 +162,6 @@ const IHbdHtParam kArrayIhtParam[] = {
   make_tuple(PARAM_LIST_16X16, DCT_ADST, 12),
   make_tuple(PARAM_LIST_16X16, ADST_ADST, 10),
   make_tuple(PARAM_LIST_16X16, ADST_ADST, 12),
-#if CONFIG_EXT_TX
   make_tuple(PARAM_LIST_16X16, FLIPADST_DCT, 10),
   make_tuple(PARAM_LIST_16X16, FLIPADST_DCT, 12),
   make_tuple(PARAM_LIST_16X16, DCT_FLIPADST, 10),
@@ -169,7 +172,6 @@ const IHbdHtParam kArrayIhtParam[] = {
   make_tuple(PARAM_LIST_16X16, ADST_FLIPADST, 12),
   make_tuple(PARAM_LIST_16X16, FLIPADST_ADST, 10),
   make_tuple(PARAM_LIST_16X16, FLIPADST_ADST, 12),
-#endif
   // 8x8
   make_tuple(PARAM_LIST_8X8, DCT_DCT, 10),
   make_tuple(PARAM_LIST_8X8, DCT_DCT, 12),
@@ -179,7 +181,6 @@ const IHbdHtParam kArrayIhtParam[] = {
   make_tuple(PARAM_LIST_8X8, DCT_ADST, 12),
   make_tuple(PARAM_LIST_8X8, ADST_ADST, 10),
   make_tuple(PARAM_LIST_8X8, ADST_ADST, 12),
-#if CONFIG_EXT_TX
   make_tuple(PARAM_LIST_8X8, FLIPADST_DCT, 10),
   make_tuple(PARAM_LIST_8X8, FLIPADST_DCT, 12),
   make_tuple(PARAM_LIST_8X8, DCT_FLIPADST, 10),
@@ -190,7 +191,6 @@ const IHbdHtParam kArrayIhtParam[] = {
   make_tuple(PARAM_LIST_8X8, ADST_FLIPADST, 12),
   make_tuple(PARAM_LIST_8X8, FLIPADST_ADST, 10),
   make_tuple(PARAM_LIST_8X8, FLIPADST_ADST, 12),
-#endif
   // 4x4
   make_tuple(PARAM_LIST_4X4, DCT_DCT, 10),
   make_tuple(PARAM_LIST_4X4, DCT_DCT, 12),
@@ -200,7 +200,6 @@ const IHbdHtParam kArrayIhtParam[] = {
   make_tuple(PARAM_LIST_4X4, DCT_ADST, 12),
   make_tuple(PARAM_LIST_4X4, ADST_ADST, 10),
   make_tuple(PARAM_LIST_4X4, ADST_ADST, 12),
-#if CONFIG_EXT_TX
   make_tuple(PARAM_LIST_4X4, FLIPADST_DCT, 10),
   make_tuple(PARAM_LIST_4X4, FLIPADST_DCT, 12),
   make_tuple(PARAM_LIST_4X4, DCT_FLIPADST, 10),
@@ -211,14 +210,15 @@ const IHbdHtParam kArrayIhtParam[] = {
   make_tuple(PARAM_LIST_4X4, ADST_FLIPADST, 12),
   make_tuple(PARAM_LIST_4X4, FLIPADST_ADST, 10),
   make_tuple(PARAM_LIST_4X4, FLIPADST_ADST, 12),
-#endif
+  make_tuple(PARAM_LIST_64X64, DCT_DCT, 10),
+  make_tuple(PARAM_LIST_64X64, DCT_DCT, 12),
 };
 
 INSTANTIATE_TEST_CASE_P(SSE4_1, AV1HighbdInvHTNxN,
                         ::testing::ValuesIn(kArrayIhtParam));
-#endif  // HAVE_SSE4_1 && CONFIG_HIGHBITDEPTH
+#endif  // HAVE_SSE4_1
 
-#if HAVE_AVX2 && CONFIG_HIGHBITDEPTH
+#if HAVE_AVX2
 #define PARAM_LIST_32X32                                   \
   &av1_fwd_txfm2d_32x32_c, &av1_inv_txfm2d_add_32x32_avx2, \
       &av1_inv_txfm2d_add_32x32_c, 1024
@@ -232,5 +232,5 @@ const IHbdHtParam kArrayIhtParam32x32[] = {
 INSTANTIATE_TEST_CASE_P(AVX2, AV1HighbdInvHTNxN,
                         ::testing::ValuesIn(kArrayIhtParam32x32));
 
-#endif  // HAVE_AVX2 && CONFIG_HIGHBITDEPTH
+#endif  // HAVE_AVX2
 }  // namespace

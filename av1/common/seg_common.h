@@ -18,44 +18,66 @@
 extern "C" {
 #endif
 
-#define SEGMENT_DELTADATA 0
-#define SEGMENT_ABSDATA 1
-
 #define MAX_SEGMENTS 8
 #define SEG_TREE_PROBS (MAX_SEGMENTS - 1)
 
-#define PREDICTION_PROBS 3
+#define SEG_TEMPORAL_PRED_CTXS 3
+#define SPATIAL_PREDICTION_PROBS 3
 
-// Segment level features.
 typedef enum {
-  SEG_LVL_ALT_Q = 0,      // Use alternate Quantizer ....
-  SEG_LVL_ALT_LF = 1,     // Use alternate loop filter value...
-  SEG_LVL_REF_FRAME = 2,  // Optional Segment reference frame
-  SEG_LVL_SKIP = 3,       // Optional Segment (0,0) + skip mode
-  SEG_LVL_MAX = 4         // Number of features supported
+  SEG_LVL_ALT_Q,       // Use alternate Quantizer ....
+  SEG_LVL_ALT_LF_Y_V,  // Use alternate loop filter value on y plane vertical
+  SEG_LVL_ALT_LF_Y_H,  // Use alternate loop filter value on y plane horizontal
+  SEG_LVL_ALT_LF_U,    // Use alternate loop filter value on u plane
+  SEG_LVL_ALT_LF_V,    // Use alternate loop filter value on v plane
+  SEG_LVL_REF_FRAME,   // Optional Segment reference frame
+  SEG_LVL_SKIP,        // Optional Segment (0,0) + skip mode
+  SEG_LVL_GLOBALMV,
+  SEG_LVL_MAX
 } SEG_LVL_FEATURES;
 
 struct segmentation {
   uint8_t enabled;
   uint8_t update_map;
   uint8_t update_data;
-  uint8_t abs_delta;
   uint8_t temporal_update;
 
   int16_t feature_data[MAX_SEGMENTS][SEG_LVL_MAX];
   unsigned int feature_mask[MAX_SEGMENTS];
+  int last_active_segid;
+  int preskip_segid;
 };
 
 struct segmentation_probs {
-  aom_prob tree_probs[SEG_TREE_PROBS];
   aom_cdf_prob tree_cdf[CDF_SIZE(MAX_SEGMENTS)];
-  aom_prob pred_probs[PREDICTION_PROBS];
+  aom_cdf_prob pred_cdf[SEG_TEMPORAL_PRED_CTXS][CDF_SIZE(2)];
+  aom_cdf_prob spatial_pred_seg_cdf[SPATIAL_PREDICTION_PROBS]
+                                   [CDF_SIZE(MAX_SEGMENTS)];
 };
 
 static INLINE int segfeature_active(const struct segmentation *seg,
                                     int segment_id,
                                     SEG_LVL_FEATURES feature_id) {
   return seg->enabled && (seg->feature_mask[segment_id] & (1 << feature_id));
+}
+
+static INLINE void segfeatures_copy(struct segmentation *dst,
+                                    struct segmentation *src) {
+  int i, j;
+  dst->preskip_segid = 0;
+  dst->last_active_segid = 0;
+  for (i = 0; i < MAX_SEGMENTS; i++) {
+    dst->feature_mask[i] = src->feature_mask[i];
+    for (j = 0; j < SEG_LVL_MAX; j++) {
+      dst->feature_data[i][j] = src->feature_data[i][j];
+      if (src->feature_mask[i] & (1 << j)) {
+        dst->preskip_segid |= j >= SEG_LVL_REF_FRAME;
+        dst->last_active_segid = i;
+        src->preskip_segid = dst->preskip_segid;
+        src->last_active_segid = dst->last_active_segid;
+      }
+    }
+  }
 }
 
 void av1_clearall_segfeatures(struct segmentation *seg);
@@ -74,8 +96,6 @@ static INLINE int get_segdata(const struct segmentation *seg, int segment_id,
                               SEG_LVL_FEATURES feature_id) {
   return seg->feature_data[segment_id][feature_id];
 }
-
-extern const aom_tree_index av1_segment_tree[TREE_SIZE(MAX_SEGMENTS)];
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -7,11 +7,13 @@
  * obtain it at www.aomedia.org/license/software. If the Alliance for Open
  * Media Patent License 1.0 was not distributed with this source code in the
  * PATENTS file, you can obtain it at www.aomedia.org/license/patent.
-*/
+ */
 
 #include <assert.h>
 #include <string>
-#include "./aom_dsp_rtcd.h"
+
+#include "config/aom_dsp_rtcd.h"
+
 #include "test/acm_random.h"
 #include "aom_dsp/aom_simd.h"
 #undef SIMD_INLINE
@@ -21,6 +23,14 @@
 // Machine tuned code goes into this file. This file is included from
 // simd_cmp_sse2.cc, simd_cmp_ssse3.cc etc which define the macros
 // ARCH (=neon, sse2, ssse3, etc), SIMD_NAMESPACE and ARCH_POSTFIX().
+
+#ifdef _MSC_VER
+// Disable "value of intrinsic immediate argument 'value' is out of range
+// 'lowerbound - upperbound'" warning. Visual Studio emits this warning though
+// the parameters are conditionally checked in e.g., v256_shr_n_byte. Adding a
+// mask doesn't always appear to be sufficient.
+#pragma warning(disable : 4556)
+#endif
 
 using libaom_test::ACMRandom;
 
@@ -371,10 +381,10 @@ typedef struct {
   fptr simd;
 } mapping;
 
-#define MAP(name)                                                      \
-  {                                                                    \
-    #name, reinterpret_cast < fptr > (c_##name),                       \
-                                      reinterpret_cast < fptr > (name) \
+#define MAP(name)                                \
+  {                                              \
+    #name, reinterpret_cast < fptr > (c_##name), \
+        reinterpret_cast < fptr > (name)         \
   }
 
 const mapping m[] = { MAP(v64_sad_u8),
@@ -1590,10 +1600,10 @@ void TestSimd2Args(uint32_t iterations, uint32_t mask, uint32_t maskwidth,
                typeid(CArg2) == typeid(c_v256)) {
       // S64_V256V256
       error = CompareSimd2Args<int64_t, v256, v256, CRet, CArg1, CArg2>(
-          reinterpret_cast<fptr>(u64_store_aligned),
+          reinterpret_cast<fptr>(s64_store_aligned),
           reinterpret_cast<fptr>(v256_load_aligned),
           reinterpret_cast<fptr>(v256_load_aligned), simd, d,
-          reinterpret_cast<fptr>(c_u64_store_aligned),
+          reinterpret_cast<fptr>(c_s64_store_aligned),
           reinterpret_cast<fptr>(c_v256_load_aligned),
           reinterpret_cast<fptr>(c_v256_load_aligned),
           reinterpret_cast<fptr>(ref_simd), ref_d, s1, s2);

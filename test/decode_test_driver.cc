@@ -7,7 +7,7 @@
  * obtain it at www.aomedia.org/license/software. If the Alliance for Open
  * Media Patent License 1.0 was not distributed with this source code in the
  * PATENTS file, you can obtain it at www.aomedia.org/license/patent.
-*/
+ */
 
 #include "third_party/googletest/src/googletest/include/gtest/gtest.h"
 
@@ -18,13 +18,12 @@
 
 namespace libaom_test {
 
-const char kVP8Name[] = "WebM Project VP8";
 const char kAV1Name[] = "AOMedia Project AV1 Decoder";
 
 aom_codec_err_t Decoder::PeekStream(const uint8_t *cxdata, size_t size,
                                     aom_codec_stream_info_t *stream_info) {
-  return aom_codec_peek_stream_info(
-      CodecInterface(), cxdata, static_cast<unsigned int>(size), stream_info);
+  return aom_codec_peek_stream_info(CodecInterface(), cxdata, size,
+                                    stream_info);
 }
 
 aom_codec_err_t Decoder::DecodeFrame(const uint8_t *cxdata, size_t size) {
@@ -36,14 +35,8 @@ aom_codec_err_t Decoder::DecodeFrame(const uint8_t *cxdata, size_t size,
   aom_codec_err_t res_dec;
   InitOnce();
   API_REGISTER_STATE_CHECK(
-      res_dec = aom_codec_decode(
-          &decoder_, cxdata, static_cast<unsigned int>(size), user_priv, 0));
+      res_dec = aom_codec_decode(&decoder_, cxdata, size, user_priv));
   return res_dec;
-}
-
-bool Decoder::IsVP8() const {
-  const char *codec_name = GetDecoderName();
-  return strncmp(kVP8Name, codec_name, sizeof(kVP8Name) - 1) == 0;
 }
 
 bool Decoder::IsAV1() const {
@@ -51,23 +44,13 @@ bool Decoder::IsAV1() const {
   return strncmp(kAV1Name, codec_name, sizeof(kAV1Name) - 1) == 0;
 }
 
-void DecoderTest::HandlePeekResult(Decoder *const decoder,
-                                   CompressedVideoSource *video,
+void DecoderTest::HandlePeekResult(Decoder *const /*decoder*/,
+                                   CompressedVideoSource * /*video*/,
                                    const aom_codec_err_t res_peek) {
-  const bool is_vp8 = decoder->IsVP8();
-  if (is_vp8) {
-    /* Vp8's implementation of PeekStream returns an error if the frame you
-     * pass it is not a keyframe, so we only expect AOM_CODEC_OK on the first
-     * frame, which must be a keyframe. */
-    if (video->frame_number() == 0)
-      ASSERT_EQ(AOM_CODEC_OK, res_peek) << "Peek return failed: "
-                                        << aom_codec_err_to_string(res_peek);
-  } else {
-    /* The Av1 implementation of PeekStream returns an error only if the
-     * data passed to it isn't a valid Av1 chunk. */
-    ASSERT_EQ(AOM_CODEC_OK, res_peek) << "Peek return failed: "
-                                      << aom_codec_err_to_string(res_peek);
-  }
+  /* The Av1 implementation of PeekStream returns an error only if the
+   * data passed to it isn't a valid Av1 chunk. */
+  ASSERT_EQ(AOM_CODEC_OK, res_peek)
+      << "Peek return failed: " << aom_codec_err_to_string(res_peek);
 }
 
 void DecoderTest::RunLoop(CompressedVideoSource *video,
@@ -90,7 +73,7 @@ void DecoderTest::RunLoop(CompressedVideoSource *video,
 
       aom_codec_err_t res_dec =
           decoder->DecodeFrame(video->cxdata(), video->frame_size());
-      if (!HandleDecodeResult(res_dec, decoder)) break;
+      if (!HandleDecodeResult(res_dec, *video, decoder)) break;
     } else {
       // Signal end of the file to the decoder.
       const aom_codec_err_t res_dec = decoder->DecodeFrame(NULL, 0);

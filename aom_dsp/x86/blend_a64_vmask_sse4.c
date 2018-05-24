@@ -21,7 +21,7 @@
 #include "aom_dsp/x86/synonyms.h"
 #include "aom_dsp/x86/blend_sse4.h"
 
-#include "./aom_dsp_rtcd.h"
+#include "config/aom_dsp_rtcd.h"
 
 //////////////////////////////////////////////////////////////////////////////
 // Implementation - No sub-sampling
@@ -143,7 +143,6 @@ void aom_blend_a64_vmask_sse4_1(uint8_t *dst, uint32_t dst_stride,
                  w);
 }
 
-#if CONFIG_HIGHBITDEPTH
 //////////////////////////////////////////////////////////////////////////////
 // Implementation - No sub-sampling
 //////////////////////////////////////////////////////////////////////////////
@@ -282,4 +281,3 @@ void aom_highbd_blend_a64_vmask_sse4_1(
                                   src1_stride, mask, h, w);
   }
 }
-#endif  // CONFIG_HIGHBITDEPTH

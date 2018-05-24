@@ -16,7 +16,7 @@
 #include "aom_dsp/aom_dsp_common.h"
 #include "aom_dsp/blend.h"
 
-#include "./aom_dsp_rtcd.h"
+#include "config/aom_dsp_rtcd.h"
 
 void aom_blend_a64_vmask_c(uint8_t *dst, uint32_t dst_stride,
                            const uint8_t *src0, uint32_t src0_stride,
@@ -41,7 +41,6 @@ void aom_blend_a64_vmask_c(uint8_t *dst, uint32_t dst_stride,
   }
 }
 
-#if CONFIG_HIGHBITDEPTH
 void aom_highbd_blend_a64_vmask_c(uint8_t *dst_8, uint32_t dst_stride,
                                   const uint8_t *src0_8, uint32_t src0_stride,
                                   const uint8_t *src1_8, uint32_t src1_stride,
@@ -70,4 +69,3 @@ void aom_highbd_blend_a64_vmask_c(uint8_t *dst_8, uint32_t dst_stride,
     }
   }
 }
-#endif  // CONFIG_HIGHBITDEPTH

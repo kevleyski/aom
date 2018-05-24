@@ -7,7 +7,7 @@
  * obtain it at www.aomedia.org/license/software. If the Alliance for Open
  * Media Patent License 1.0 was not distributed with this source code in the
  * PATENTS file, you can obtain it at www.aomedia.org/license/patent.
-*/
+ */
 
 #include <math.h>
 #include <stdlib.h>
@@ -69,7 +69,7 @@ TEST(AV1, TestBitIO) {
         aom_stop_encode(&bw);
 
         aom_reader br;
-        aom_reader_init(&br, bw_buffer, bw.pos, NULL, NULL);
+        aom_reader_init(&br, bw_buffer, bw.pos);
         bit_rnd.Reset(random_seed);
         for (int i = 0; i < kBitsToTest; ++i) {
           if (bit_method == 2) {
@@ -86,11 +86,7 @@ TEST(AV1, TestBitIO) {
   }
 }
 
-#if CONFIG_EC_SMALLMUL
-#define FRAC_DIFF_TOTAL_ERROR 0.16
-#else
-#define FRAC_DIFF_TOTAL_ERROR 0.07
-#endif
+#define FRAC_DIFF_TOTAL_ERROR 0.18
 
 TEST(AV1, TestTell) {
   const int kBufferSize = 10000;
@@ -106,7 +102,7 @@ TEST(AV1, TestTell) {
     }
     aom_stop_encode(&bw);
     aom_reader br;
-    aom_reader_init(&br, bw_buffer, bw.pos, NULL, NULL);
+    aom_reader_init(&br, bw_buffer, bw.pos);
     uint32_t last_tell = aom_reader_tell(&br);
     uint32_t last_tell_frac = aom_reader_tell_frac(&br);
     double frac_diff_total = 0;
@@ -116,8 +112,8 @@ TEST(AV1, TestTell) {
       aom_read(&br, p, NULL);
       uint32_t tell = aom_reader_tell(&br);
       uint32_t tell_frac = aom_reader_tell_frac(&br);
-      GTEST_ASSERT_GE(tell, last_tell) << "tell: " << tell
-                                       << ", last_tell: " << last_tell;
+      GTEST_ASSERT_GE(tell, last_tell)
+          << "tell: " << tell << ", last_tell: " << last_tell;
       GTEST_ASSERT_GE(tell_frac, last_tell_frac)
           << "tell_frac: " << tell_frac
           << ", last_tell_frac: " << last_tell_frac;

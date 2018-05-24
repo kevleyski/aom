@@ -13,8 +13,8 @@
 #include <algorithm>
 #include <string>
 
+#include "common/y4minput.h"
 #include "test/video_source.h"
-#include "./y4minput.h"
 
 namespace libaom_test {
 
@@ -35,8 +35,8 @@ class Y4mVideoSource : public VideoSource {
   virtual void OpenSource() {
     CloseSource();
     input_file_ = OpenTestDataFile(file_name_);
-    ASSERT_TRUE(input_file_ != NULL) << "Input file open failed. Filename: "
-                                     << file_name_;
+    ASSERT_TRUE(input_file_ != NULL)
+        << "Input file open failed. Filename: " << file_name_;
   }
 
   virtual void ReadSourceToStart() {

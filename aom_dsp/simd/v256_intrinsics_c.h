@@ -14,8 +14,10 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include "./v128_intrinsics_c.h"
-#include "./aom_config.h"
+
+#include "config/aom_config.h"
+
+#include "aom_dsp/simd/v128_intrinsics_c.h"
 
 typedef union {
   uint8_t u8[32];

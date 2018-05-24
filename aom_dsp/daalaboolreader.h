@@ -34,22 +34,20 @@ struct daala_reader {
 #if CONFIG_ACCOUNTING
   Accounting *accounting;
 #endif
+  uint8_t allow_update_cdf;
 };
 
 typedef struct daala_reader daala_reader;
 
 int aom_daala_reader_init(daala_reader *r, const uint8_t *buffer, int size);
+const uint8_t *aom_daala_reader_find_begin(daala_reader *r);
 const uint8_t *aom_daala_reader_find_end(daala_reader *r);
 uint32_t aom_daala_reader_tell(const daala_reader *r);
 uint32_t aom_daala_reader_tell_frac(const daala_reader *r);
 
 static INLINE int aom_daala_read(daala_reader *r, int prob) {
   int bit;
-#if CONFIG_EC_SMALLMUL
   int p = (0x7FFFFF - (prob << 15) + prob) >> 8;
-#else
-  int p = ((prob << 15) + 256 - prob) >> 8;
-#endif
 #if CONFIG_BITSTREAM_DEBUG
 /*{
   const int queue_r = bitstream_queue_get_read();
@@ -100,12 +98,6 @@ static INLINE int aom_daala_read(daala_reader *r, int prob) {
   return bit;
 }
 
-#if CONFIG_RAWBITS
-static INLINE int aom_daala_read_bit(daala_reader *r) {
-  return od_ec_dec_bits(&r->ec, 1, "aom_bits");
-}
-#endif
-
 static INLINE int aom_daala_reader_has_error(daala_reader *r) {
   return r->ec.error;
 }
@@ -113,6 +105,7 @@ static INLINE int aom_daala_reader_has_error(daala_reader *r) {
 static INLINE int daala_read_symbol(daala_reader *r, const aom_cdf_prob *cdf,
                                     int nsymbs) {
   int symb;
+  assert(cdf != NULL);
   symb = od_ec_decode_cdf_q15(&r->ec, cdf, nsymbs);
 
 #if CONFIG_BITSTREAM_DEBUG

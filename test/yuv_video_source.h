@@ -44,8 +44,8 @@ class YUVVideoSource : public VideoSource {
   virtual void Begin() {
     if (input_file_) fclose(input_file_);
     input_file_ = OpenTestDataFile(file_name_);
-    ASSERT_TRUE(input_file_ != NULL) << "Input file open failed. Filename: "
-                                     << file_name_;
+    ASSERT_TRUE(input_file_ != NULL)
+        << "Input file open failed. Filename: " << file_name_;
     if (start_)
       fseek(input_file_, static_cast<unsigned>(raw_size_) * start_, SEEK_SET);
 
@@ -86,11 +86,9 @@ class YUVVideoSource : public VideoSource {
       switch (format) {
         case AOM_IMG_FMT_I420: raw_size_ = width * height * 3 / 2; break;
         case AOM_IMG_FMT_I422: raw_size_ = width * height * 2; break;
-        case AOM_IMG_FMT_I440: raw_size_ = width * height * 2; break;
         case AOM_IMG_FMT_I444: raw_size_ = width * height * 3; break;
         case AOM_IMG_FMT_I42016: raw_size_ = width * height * 3; break;
         case AOM_IMG_FMT_I42216: raw_size_ = width * height * 4; break;
-        case AOM_IMG_FMT_I44016: raw_size_ = width * height * 4; break;
         case AOM_IMG_FMT_I44416: raw_size_ = width * height * 6; break;
         default: ASSERT_TRUE(0);
       }

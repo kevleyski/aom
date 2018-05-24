@@ -34,10 +34,8 @@ static const int segment_id[ENERGY_SPAN] = { 0, 1, 1, 2, 3, 4 };
 #define SEGMENT_ID(i) segment_id[(i)-ENERGY_MIN]
 
 DECLARE_ALIGNED(16, static const uint8_t, av1_all_zeros[MAX_SB_SIZE]) = { 0 };
-#if CONFIG_HIGHBITDEPTH
 DECLARE_ALIGNED(16, static const uint16_t,
                 av1_highbd_all_zeros[MAX_SB_SIZE]) = { 0 };
-#endif
 
 unsigned int av1_vaq_segment_id(int energy) {
   ENERGY_IN_BOUNDS(energy);
@@ -49,6 +47,16 @@ void av1_vaq_frame_setup(AV1_COMP *cpi) {
   struct segmentation *seg = &cm->seg;
   int i;
 
+  int resolution_change =
+      cm->prev_frame && (cm->width != cm->prev_frame->width ||
+                         cm->height != cm->prev_frame->height);
+  if (resolution_change) {
+    memset(cpi->segmentation_map, 0, cm->mi_rows * cm->mi_cols);
+    av1_clearall_segfeatures(seg);
+    aom_clear_system_state();
+    av1_disable_segmentation(seg);
+    return;
+  }
   if (frame_is_intra_only(cm) || cm->error_resilient_mode ||
       cpi->refresh_alt_ref_frame ||
       (cpi->refresh_golden_frame && !cpi->rc.is_src_frame_alt_ref)) {
@@ -56,8 +64,6 @@ void av1_vaq_frame_setup(AV1_COMP *cpi) {
 
     av1_enable_segmentation(seg);
     av1_clearall_segfeatures(seg);
-
-    seg->abs_delta = SEGMENT_DELTADATA;
 
     aom_clear_system_state();
 
@@ -72,11 +78,6 @@ void av1_vaq_frame_setup(AV1_COMP *cpi) {
       // This could lead to an illegal combination of partition size and q.
       if ((cm->base_qindex != 0) && ((cm->base_qindex + qindex_delta) == 0)) {
         qindex_delta = -cm->base_qindex + 1;
-      }
-
-      // No need to enable SEG_LVL_ALT_Q for this segment.
-      if (rate_ratio[i] == 1.0) {
-        continue;
       }
 
       av1_set_segdata(seg, i, SEG_LVL_ALT_Q, qindex_delta);
@@ -108,7 +109,6 @@ static void aq_variance(const uint8_t *a, int a_stride, const uint8_t *b,
   }
 }
 
-#if CONFIG_HIGHBITDEPTH
 static void aq_highbd_variance64(const uint8_t *a8, int a_stride,
                                  const uint8_t *b8, int b_stride, int w, int h,
                                  uint64_t *sse, uint64_t *sum) {
@@ -139,7 +139,6 @@ static void aq_highbd_8_variance(const uint8_t *a8, int a_stride,
   *sse = (unsigned int)sse_long;
   *sum = (int)sum_long;
 }
-#endif  // CONFIG_HIGHBITDEPTH
 
 static unsigned int block_variance(const AV1_COMP *const cpi, MACROBLOCK *x,
                                    BLOCK_SIZE bs) {
@@ -151,10 +150,9 @@ static unsigned int block_variance(const AV1_COMP *const cpi, MACROBLOCK *x,
       (xd->mb_to_bottom_edge < 0) ? ((-xd->mb_to_bottom_edge) >> 3) : 0;
 
   if (right_overflow || bottom_overflow) {
-    const int bw = 8 * mi_size_wide[bs] - right_overflow;
-    const int bh = 8 * mi_size_high[bs] - bottom_overflow;
+    const int bw = MI_SIZE * mi_size_wide[bs] - right_overflow;
+    const int bh = MI_SIZE * mi_size_high[bs] - bottom_overflow;
     int avg;
-#if CONFIG_HIGHBITDEPTH
     if (xd->cur_buf->flags & YV12_FLAG_HIGHBITDEPTH) {
       aq_highbd_8_variance(x->plane[0].src.buf, x->plane[0].src.stride,
                            CONVERT_TO_BYTEPTR(av1_highbd_all_zeros), 0, bw, bh,
@@ -165,14 +163,9 @@ static unsigned int block_variance(const AV1_COMP *const cpi, MACROBLOCK *x,
       aq_variance(x->plane[0].src.buf, x->plane[0].src.stride, av1_all_zeros, 0,
                   bw, bh, &sse, &avg);
     }
-#else
-    aq_variance(x->plane[0].src.buf, x->plane[0].src.stride, av1_all_zeros, 0,
-                bw, bh, &sse, &avg);
-#endif  // CONFIG_HIGHBITDEPTH
     var = sse - (unsigned int)(((int64_t)avg * avg) / (bw * bh));
     return (unsigned int)((uint64_t)var * 256) / (bw * bh);
   } else {
-#if CONFIG_HIGHBITDEPTH
     if (xd->cur_buf->flags & YV12_FLAG_HIGHBITDEPTH) {
       var =
           cpi->fn_ptr[bs].vf(x->plane[0].src.buf, x->plane[0].src.stride,
@@ -181,10 +174,6 @@ static unsigned int block_variance(const AV1_COMP *const cpi, MACROBLOCK *x,
       var = cpi->fn_ptr[bs].vf(x->plane[0].src.buf, x->plane[0].src.stride,
                                av1_all_zeros, 0, &sse);
     }
-#else
-    var = cpi->fn_ptr[bs].vf(x->plane[0].src.buf, x->plane[0].src.stride,
-                             av1_all_zeros, 0, &sse);
-#endif  // CONFIG_HIGHBITDEPTH
     return (unsigned int)((uint64_t)var * 256) >> num_pels_log2_lookup[bs];
   }
 }

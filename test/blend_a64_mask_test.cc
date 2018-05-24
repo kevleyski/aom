@@ -17,11 +17,11 @@
 #include "test/register_state_check.h"
 #include "test/function_equivalence_test.h"
 
-#include "./aom_config.h"
-#include "./aom_dsp_rtcd.h"
-#include "aom/aom_integer.h"
+#include "config/aom_config.h"
+#include "config/aom_dsp_rtcd.h"
+#include "config/av1_rtcd.h"
 
-#include "./av1_rtcd.h"
+#include "aom/aom_integer.h"
 
 #include "av1/common/enums.h"
 
@@ -182,7 +182,6 @@ INSTANTIATE_TEST_CASE_P(SSE4_1, BlendA64MaskTest8B,
                             aom_blend_a64_mask_c, aom_blend_a64_mask_sse4_1)));
 #endif  // HAVE_SSE4_1
 
-#if CONFIG_HIGHBITDEPTH
 //////////////////////////////////////////////////////////////////////////////
 // High bit-depth version
 //////////////////////////////////////////////////////////////////////////////
@@ -266,5 +265,4 @@ INSTANTIATE_TEST_CASE_P(
     ::testing::Values(TestFuncsHBD(aom_highbd_blend_a64_mask_c,
                                    aom_highbd_blend_a64_mask_sse4_1)));
 #endif  // HAVE_SSE4_1
-#endif  // CONFIG_HIGHBITDEPTH
 }  // namespace
