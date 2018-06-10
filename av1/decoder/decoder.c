@@ -156,6 +156,7 @@ void av1_decoder_remove(AV1Decoder *pbi) {
 
   if (pbi->num_workers > 0) {
     av1_loop_filter_dealloc(&pbi->lf_row_sync);
+    av1_loop_restoration_dealloc(&pbi->lr_row_sync, pbi->num_workers);
   }
 
 #if CONFIG_ACCOUNTING
@@ -257,39 +258,57 @@ aom_codec_err_t av1_copy_new_frame_dec(AV1_COMMON *cm,
   return cm->error.error_code;
 }
 
-/* If any buffer updating is signaled it should be done here. */
-static void swap_frame_buffers(AV1Decoder *pbi) {
+/* If any buffer updating is signaled it should be done here.
+   Consumes a reference to cm->new_fb_idx.
+*/
+static void swap_frame_buffers(AV1Decoder *pbi, int frame_decoded) {
   int ref_index = 0, mask;
   AV1_COMMON *const cm = &pbi->common;
   BufferPool *const pool = cm->buffer_pool;
   RefCntBuffer *const frame_bufs = cm->buffer_pool->frame_bufs;
 
-  if (!pbi->dropped_obus) {
+  if (frame_decoded) {
     lock_buffer_pool(pool);
-    for (mask = pbi->refresh_frame_flags; mask; mask >>= 1) {
-      const int old_idx = cm->ref_frame_map[ref_index];
-      // Current thread releases the holding of reference frame.
-      decrease_ref_count(old_idx, frame_bufs, pool);
 
-      // Release the reference frame holding in the reference map for the
-      // decoding of the next frame.
-      if (mask & 1) decrease_ref_count(old_idx, frame_bufs, pool);
-      cm->ref_frame_map[ref_index] = cm->next_ref_frame_map[ref_index];
-      ++ref_index;
+    // In ext-tile decoding, the camera frame header is only decoded once. So,
+    // we don't release the references here.
+    if (!pbi->camera_frame_header_ready) {
+      for (mask = pbi->refresh_frame_flags; mask; mask >>= 1) {
+        const int old_idx = cm->ref_frame_map[ref_index];
+        // Current thread releases the holding of reference frame.
+        decrease_ref_count(old_idx, frame_bufs, pool);
+
+        // Release the reference frame holding in the reference map for the
+        // decoding of the next frame.
+        if (mask & 1) decrease_ref_count(old_idx, frame_bufs, pool);
+        cm->ref_frame_map[ref_index] = cm->next_ref_frame_map[ref_index];
+        ++ref_index;
+      }
+
+      // Current thread releases the holding of reference frame.
+      const int check_on_show_existing_frame =
+          !cm->show_existing_frame || cm->reset_decoder_state;
+      for (; ref_index < REF_FRAMES && check_on_show_existing_frame;
+           ++ref_index) {
+        const int old_idx = cm->ref_frame_map[ref_index];
+        decrease_ref_count(old_idx, frame_bufs, pool);
+        cm->ref_frame_map[ref_index] = cm->next_ref_frame_map[ref_index];
+      }
     }
 
-    // Current thread releases the holding of reference frame.
-    const int check_on_show_existing_frame =
-        !cm->show_existing_frame || cm->reset_decoder_state;
-    for (; ref_index < REF_FRAMES && check_on_show_existing_frame;
-         ++ref_index) {
-      const int old_idx = cm->ref_frame_map[ref_index];
-      decrease_ref_count(old_idx, frame_bufs, pool);
-      cm->ref_frame_map[ref_index] = cm->next_ref_frame_map[ref_index];
+    YV12_BUFFER_CONFIG *cur_frame = get_frame_new_buffer(cm);
+
+    if (cm->show_existing_frame || cm->show_frame) {
+      if (pbi->output_frame) {
+        decrease_ref_count(pbi->output_frame_index, frame_bufs, pool);
+      }
+      pbi->output_frame = cur_frame;
+      pbi->output_frame_index = cm->new_fb_idx;
+    } else {
+      decrease_ref_count(cm->new_fb_idx, frame_bufs, pool);
     }
 
     unlock_buffer_pool(pool);
-    cm->frame_to_show = get_frame_new_buffer(cm);
 
     // For now, we only extend the frame borders when the whole frame is
     // decoded. Later, if needed, extend the border for the decoded tile on the
@@ -297,20 +316,23 @@ static void swap_frame_buffers(AV1Decoder *pbi) {
     if (pbi->dec_tile_row == -1 && pbi->dec_tile_col == -1)
       // TODO(debargha): Fix encoder side mv range, so that we can use the
       // inner border extension. As of now use the larger extension.
-      // aom_extend_frame_inner_borders(cm->frame_to_show, av1_num_planes(cm));
-      aom_extend_frame_borders(cm->frame_to_show, av1_num_planes(cm));
+      // aom_extend_frame_inner_borders(cur_frame, av1_num_planes(cm));
+      aom_extend_frame_borders(cur_frame, av1_num_planes(cm));
+  } else {
+    // Nothing was decoded, so just drop this frame buffer
+    lock_buffer_pool(pool);
+    decrease_ref_count(cm->new_fb_idx, frame_bufs, pool);
+    unlock_buffer_pool(pool);
   }
 
-  pbi->hold_ref_buf = 0;
+  if (!pbi->camera_frame_header_ready) {
+    pbi->hold_ref_buf = 0;
 
-  lock_buffer_pool(pool);
-  --frame_bufs[cm->new_fb_idx].ref_count;
-  unlock_buffer_pool(pool);
-
-  // Invalidate these references until the next frame starts.
-  for (ref_index = 0; ref_index < INTER_REFS_PER_FRAME; ref_index++) {
-    cm->frame_refs[ref_index].idx = INVALID_IDX;
-    cm->frame_refs[ref_index].buf = NULL;
+    // Invalidate these references until the next frame starts.
+    for (ref_index = 0; ref_index < INTER_REFS_PER_FRAME; ref_index++) {
+      cm->frame_refs[ref_index].idx = INVALID_IDX;
+      cm->frame_refs[ref_index].buf = NULL;
+    }
   }
 }
 
@@ -340,12 +362,6 @@ int av1_receive_compressed_data(AV1Decoder *pbi, size_t size,
   // Find a free buffer for the new frame, releasing the reference previously
   // held.
 
-  // Check if the previous frame was a frame without any references to it.
-  // Release frame buffer if not decoding in frame parallel mode.
-  if (cm->new_fb_idx >= 0 && frame_bufs[cm->new_fb_idx].ref_count == 0)
-    pool->release_fb_cb(pool->cb_priv,
-                        &frame_bufs[cm->new_fb_idx].raw_frame_buffer);
-
   // Find a free frame buffer. Return error if can not find any.
   cm->new_fb_idx = get_free_fb(cm);
   if (cm->new_fb_idx == INVALID_IDX) return AOM_CODEC_MEM_ERROR;
@@ -353,7 +369,8 @@ int av1_receive_compressed_data(AV1Decoder *pbi, size_t size,
   // Assign a MV array to the frame buffer.
   cm->cur_frame = &pool->frame_bufs[cm->new_fb_idx];
 
-  pbi->hold_ref_buf = 0;
+  if (!pbi->camera_frame_header_ready) pbi->hold_ref_buf = 0;
+
   pbi->cur_buf = &frame_bufs[cm->new_fb_idx];
 
   if (setjmp(cm->error.jmp)) {
@@ -405,7 +422,8 @@ int av1_receive_compressed_data(AV1Decoder *pbi, size_t size,
 
   cm->error.setjmp = 1;
 
-  aom_decode_frame_from_obus(pbi, source, source + size, psource);
+  int frame_decoded =
+      aom_decode_frame_from_obus(pbi, source, source + size, psource);
 
   if (cm->error.error_code != AOM_CODEC_OK) return 1;
 
@@ -418,7 +436,9 @@ int av1_receive_compressed_data(AV1Decoder *pbi, size_t size,
   cm->txb_count = 0;
 #endif
 
-  swap_frame_buffers(pbi);
+  // Note: At this point, this function holds a reference to cm->new_fb_idx
+  // in the buffer pool. This reference is consumed by swap_frame_buffers().
+  swap_frame_buffers(pbi, frame_decoded);
 
   aom_clear_system_state();
 
@@ -442,7 +462,7 @@ int av1_receive_compressed_data(AV1Decoder *pbi, size_t size,
   cm->last_tile_rows = cm->tile_rows;
   cm->error.setjmp = 0;
 
-  if (!pbi->dropped_obus) pbi->ready_for_new_data = 0;
+  if (frame_decoded) pbi->ready_for_new_data = 0;
   return 0;
 }
 
@@ -455,7 +475,7 @@ int av1_get_raw_frame(AV1Decoder *pbi, YV12_BUFFER_CONFIG *sd) {
   /* no raw frame to show!!! */
   if (!cm->show_frame) return -1;
 
-  *sd = *cm->frame_to_show;
+  *sd = *pbi->output_frame;
   aom_clear_system_state();
   return 0;
 }
@@ -463,8 +483,8 @@ int av1_get_raw_frame(AV1Decoder *pbi, YV12_BUFFER_CONFIG *sd) {
 int av1_get_frame_to_show(AV1Decoder *pbi, YV12_BUFFER_CONFIG *frame) {
   AV1_COMMON *const cm = &pbi->common;
 
-  if (!cm->show_frame || !cm->frame_to_show) return -1;
+  if (!cm->show_frame || !pbi->output_frame) return -1;
 
-  *frame = *cm->frame_to_show;
+  *frame = *pbi->output_frame;
   return 0;
 }

@@ -262,9 +262,9 @@ typedef struct MB_MODE_INFO {
   PARTITION_TYPE partition;
   /* deringing gain *per-superblock* */
   int8_t cdef_strength;
-  int current_q_index;
-  int current_delta_lf_from_base;
-  int curr_delta_lf[FRAME_LF_COUNT];
+  int current_qindex;
+  int delta_lf_from_base;
+  int delta_lf[FRAME_LF_COUNT];
 #if CONFIG_RD_DEBUG
   RD_STATS rd_stats;
   int mi_row;
@@ -449,11 +449,11 @@ typedef struct {
 #define CFL_BUF_LINE_I256 (CFL_BUF_LINE >> 4)
 #define CFL_BUF_SQUARE (CFL_BUF_LINE * CFL_BUF_LINE)
 typedef struct cfl_ctx {
-  // The CfL prediction buffer is used in two steps:
-  //   1. Stores Q3 reconstructed luma pixels
-  //      (only Q2 is required, but Q3 is used to avoid shifts)
-  //   2. Stores Q3 AC contributions (step1 - tx block avg)
-  int16_t pred_buf_q3[CFL_BUF_SQUARE];
+  // Q3 reconstructed luma pixels (only Q2 is required, but Q3 is used to avoid
+  // shifts)
+  uint16_t recon_buf_q3[CFL_BUF_SQUARE];
+  // Q3 AC contributions (reconstructed luma pixels - tx block avg)
+  int16_t ac_buf_q3[CFL_BUF_SQUARE];
 
   // Cache the DC_PRED when performing RDO, so it does not have to be recomputed
   // for every scaling parameter
@@ -491,8 +491,6 @@ typedef struct jnt_comp_params {
 
 typedef struct macroblockd {
   struct macroblockd_plane plane[MAX_MB_PLANE];
-  uint8_t bmode_blocks_wl;
-  uint8_t bmode_blocks_hl;
 
   TileInfo tile;
 
@@ -514,8 +512,6 @@ typedef struct macroblockd {
   int mb_to_right_edge;
   int mb_to_top_edge;
   int mb_to_bottom_edge;
-
-  FRAME_CONTEXT *fc;
 
   /* pointers to reference frames */
   const RefBuffer *block_refs[2];
@@ -558,7 +554,6 @@ typedef struct macroblockd {
   // same with that in AV1_COMMON
   struct aom_internal_error_info *error_info;
   const WarpedMotionParams *global_motion;
-  int prev_qindex;
   int delta_qindex;
   int current_qindex;
   // Since actual frame level loop filtering level value is not available
@@ -567,8 +562,7 @@ typedef struct macroblockd {
   // filtering level) and code the delta between previous superblock's delta
   // lf and current delta lf. It is equivalent to the delta between previous
   // superblock's actual lf and current lf.
-  int prev_delta_lf_from_base;
-  int current_delta_lf_from_base;
+  int delta_lf_from_base;
   // For this experiment, we have four frame filter levels for different plane
   // and direction. So, to support the per superblock update, we need to add
   // a few more params as below.
@@ -582,8 +576,7 @@ typedef struct macroblockd {
   // SEG_LVL_ALT_LF_Y_H = 2;
   // SEG_LVL_ALT_LF_U   = 3;
   // SEG_LVL_ALT_LF_V   = 4;
-  int prev_delta_lf[FRAME_LF_COUNT];
-  int curr_delta_lf[FRAME_LF_COUNT];
+  int delta_lf[FRAME_LF_COUNT];
   int cdef_preset[4];
 
   DECLARE_ALIGNED(16, uint8_t, seg_mask[2 * MAX_SB_SQUARE]);
@@ -919,6 +912,8 @@ static INLINE TX_SIZE av1_get_tx_size(int plane, const MACROBLOCKD *xd) {
 
 void av1_reset_skip_context(MACROBLOCKD *xd, int mi_row, int mi_col,
                             BLOCK_SIZE bsize, const int num_planes);
+
+void av1_reset_loop_filter_delta(MACROBLOCKD *xd, int num_planes);
 
 void av1_reset_loop_restoration(MACROBLOCKD *xd, const int num_planes);
 

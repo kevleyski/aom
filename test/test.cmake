@@ -33,6 +33,8 @@ set(AOM_UNIT_TEST_COMMON_SOURCES
     "${AOM_ROOT}/test/function_equivalence_test.h"
     "${AOM_ROOT}/test/md5_helper.h"
     "${AOM_ROOT}/test/register_state_check.h"
+    "${AOM_ROOT}/test/test_vectors.cc"
+    "${AOM_ROOT}/test/test_vectors.h"
     "${AOM_ROOT}/test/transform_test_base.h"
     "${AOM_ROOT}/test/util.h"
     "${AOM_ROOT}/test/video_source.h")
@@ -71,6 +73,7 @@ endif()
 
 set(AOM_UNIT_TEST_DECODER_SOURCES "${AOM_ROOT}/test/decode_api_test.cc"
     "${AOM_ROOT}/test/invalid_file_test.cc"
+    "${AOM_ROOT}/test/test_vector_test.cc"
     "${AOM_ROOT}/test/ivf_video_source.h")
 
 set(AOM_UNIT_TEST_ENCODER_SOURCES
@@ -167,16 +170,14 @@ if(CONFIG_AV1_ENCODER)
         "${AOM_ROOT}/test/av1_inv_txfm1d_test.cc"
         "${AOM_ROOT}/test/av1_inv_txfm2d_test.cc"
         "${AOM_ROOT}/test/av1_wedge_utils_test.cc"
-        "${AOM_ROOT}/test/avg_test.cc"
         "${AOM_ROOT}/test/blend_a64_mask_1d_test.cc"
         "${AOM_ROOT}/test/blend_a64_mask_test.cc"
         "${AOM_ROOT}/test/error_block_test.cc"
+        "${AOM_ROOT}/test/fft_test.cc"
         "${AOM_ROOT}/test/fwht4x4_test.cc"
-        "${AOM_ROOT}/test/hadamard_test.cc"
         "${AOM_ROOT}/test/masked_sad_test.cc"
         "${AOM_ROOT}/test/masked_variance_test.cc"
         "${AOM_ROOT}/test/comp_mask_variance_test.cc"
-        "${AOM_ROOT}/test/minmax_test.cc"
         "${AOM_ROOT}/test/noise_model_test.cc"
         "${AOM_ROOT}/test/subtract_test.cc"
         "${AOM_ROOT}/test/sum_squares_test.cc"

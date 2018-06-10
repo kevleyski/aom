@@ -36,17 +36,17 @@ struct yv12_buffer_config;
 
 /* Function pointers return by CfL functions */
 typedef void (*cfl_subsample_lbd_fn)(const uint8_t *input, int input_stride,
-                                     int16_t *output_q3);
+                                     uint16_t *output_q3);
 
 typedef void (*cfl_subsample_hbd_fn)(const uint16_t *input, int input_stride,
-                                     int16_t *output_q3);
+                                     uint16_t *output_q3);
 
-typedef void (*cfl_subtract_average_fn)(int16_t *pred_buf_q3);
+typedef void (*cfl_subtract_average_fn)(const uint16_t *src, int16_t *dst);
 
-typedef void (*cfl_predict_lbd_fn)(const int16_t *pred_buf_q3, uint8_t *dst,
+typedef void (*cfl_predict_lbd_fn)(const int16_t *src, uint8_t *dst,
                                    int dst_stride, int alpha_q3);
 
-typedef void (*cfl_predict_hbd_fn)(const int16_t *pred_buf_q3, uint16_t *dst,
+typedef void (*cfl_predict_hbd_fn)(const int16_t *src, uint16_t *dst,
                                    int dst_stride, int alpha_q3, int bd);
 EOF
 }
@@ -316,15 +316,16 @@ add_proto qw/void av1_highbd_jnt_convolve_2d_copy/, "const uint16_t *src, int sr
 
   add_proto qw/void av1_convolve_2d_scale/, "const uint8_t *src, int src_stride, uint8_t *dst, int dst_stride, int w, int h, InterpFilterParams *filter_params_x, InterpFilterParams *filter_params_y, const int subpel_x_qn, const int x_step_qn, const int subpel_y_q4, const int y_step_qn, ConvolveParams *conv_params";
   add_proto qw/void av1_highbd_convolve_2d_scale/, "const uint16_t *src, int src_stride, uint16_t *dst, int dst_stride, int w, int h, InterpFilterParams *filter_params_x, InterpFilterParams *filter_params_y, const int subpel_x_q4, const int x_step_qn, const int subpel_y_q4, const int y_step_qn, ConvolveParams *conv_params, int bd";
-  specialize qw/av1_convolve_2d_sr sse2 avx2/;
-  specialize qw/av1_convolve_2d_copy_sr sse2 avx2/;
+
+  specialize qw/av1_convolve_2d_sr sse2 avx2 neon/;
+  specialize qw/av1_convolve_2d_copy_sr sse2 avx2 neon/;
   specialize qw/av1_convolve_x_sr sse2 avx2 neon/;
   specialize qw/av1_convolve_y_sr sse2 avx2 neon/;
   specialize qw/av1_convolve_2d_scale sse4_1/;
   specialize qw/av1_jnt_convolve_2d ssse3 avx2 neon/;
-  specialize qw/av1_jnt_convolve_2d_copy sse2 avx2/;
-  specialize qw/av1_jnt_convolve_x sse2 avx2/;
-  specialize qw/av1_jnt_convolve_y sse2 avx2/;
+  specialize qw/av1_jnt_convolve_2d_copy sse2 avx2 neon/;
+  specialize qw/av1_jnt_convolve_x sse2 avx2 neon/;
+  specialize qw/av1_jnt_convolve_y sse2 avx2 neon/;
   specialize qw/av1_highbd_convolve_2d_copy_sr sse2 avx2/;
   specialize qw/av1_highbd_convolve_2d_sr ssse3 avx2/;
   specialize qw/av1_highbd_convolve_x_sr ssse3 avx2/;

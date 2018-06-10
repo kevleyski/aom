@@ -907,9 +907,9 @@ static void write_inter_segment_id(AV1_COMP *cpi, aom_writer *w,
 
   if (seg->update_map) {
     if (preskip) {
-      if (!seg->preskip_segid) return;
+      if (!seg->segid_preskip) return;
     } else {
-      if (seg->preskip_segid) return;
+      if (seg->segid_preskip) return;
       if (skip) {
         write_segment_id(cpi, mbmi, w, seg, segp, mi_row, mi_col, 1);
         if (seg->temporal_update) ((MB_MODE_INFO *)mbmi)->seg_id_predicted = 0;
@@ -970,28 +970,28 @@ static void pack_inter_mode_mvs(AV1_COMP *cpi, const int mi_row,
         ((mi_col & (cm->seq_params.mib_size - 1)) == 0);
     if ((bsize != cm->seq_params.sb_size || skip == 0) &&
         super_block_upper_left) {
-      assert(mbmi->current_q_index > 0);
+      assert(mbmi->current_qindex > 0);
       int reduced_delta_qindex =
-          (mbmi->current_q_index - xd->prev_qindex) / cm->delta_q_res;
+          (mbmi->current_qindex - xd->current_qindex) / cm->delta_q_res;
       write_delta_qindex(xd, reduced_delta_qindex, w);
-      xd->prev_qindex = mbmi->current_q_index;
+      xd->current_qindex = mbmi->current_qindex;
       if (cm->delta_lf_present_flag) {
         if (cm->delta_lf_multi) {
           const int frame_lf_count =
               av1_num_planes(cm) > 1 ? FRAME_LF_COUNT : FRAME_LF_COUNT - 2;
           for (int lf_id = 0; lf_id < frame_lf_count; ++lf_id) {
             int reduced_delta_lflevel =
-                (mbmi->curr_delta_lf[lf_id] - xd->prev_delta_lf[lf_id]) /
+                (mbmi->delta_lf[lf_id] - xd->delta_lf[lf_id]) /
                 cm->delta_lf_res;
             write_delta_lflevel(cm, xd, lf_id, reduced_delta_lflevel, w);
-            xd->prev_delta_lf[lf_id] = mbmi->curr_delta_lf[lf_id];
+            xd->delta_lf[lf_id] = mbmi->delta_lf[lf_id];
           }
         } else {
           int reduced_delta_lflevel =
-              (mbmi->current_delta_lf_from_base - xd->prev_delta_lf_from_base) /
+              (mbmi->delta_lf_from_base - xd->delta_lf_from_base) /
               cm->delta_lf_res;
           write_delta_lflevel(cm, xd, -1, reduced_delta_lflevel, w);
-          xd->prev_delta_lf_from_base = mbmi->current_delta_lf_from_base;
+          xd->delta_lf_from_base = mbmi->delta_lf_from_base;
         }
       }
     }
@@ -1180,12 +1180,12 @@ static void write_mb_modes_kf(AV1_COMP *cpi, MACROBLOCKD *xd,
   const BLOCK_SIZE bsize = mbmi->sb_type;
   const PREDICTION_MODE mode = mbmi->mode;
 
-  if (seg->preskip_segid && seg->update_map)
+  if (seg->segid_preskip && seg->update_map)
     write_segment_id(cpi, mbmi, w, seg, segp, mi_row, mi_col, 0);
 
   const int skip = write_skip(cm, xd, mbmi->segment_id, mbmi, w);
 
-  if (!seg->preskip_segid && seg->update_map)
+  if (!seg->segid_preskip && seg->update_map)
     write_segment_id(cpi, mbmi, w, seg, segp, mi_row, mi_col, skip);
 
   write_cdef(cm, xd, w, skip, mi_col, mi_row);
@@ -1196,28 +1196,28 @@ static void write_mb_modes_kf(AV1_COMP *cpi, MACROBLOCKD *xd,
         ((mi_col & (cm->seq_params.mib_size - 1)) == 0);
     if ((bsize != cm->seq_params.sb_size || skip == 0) &&
         super_block_upper_left) {
-      assert(mbmi->current_q_index > 0);
+      assert(mbmi->current_qindex > 0);
       int reduced_delta_qindex =
-          (mbmi->current_q_index - xd->prev_qindex) / cm->delta_q_res;
+          (mbmi->current_qindex - xd->current_qindex) / cm->delta_q_res;
       write_delta_qindex(xd, reduced_delta_qindex, w);
-      xd->prev_qindex = mbmi->current_q_index;
+      xd->current_qindex = mbmi->current_qindex;
       if (cm->delta_lf_present_flag) {
         if (cm->delta_lf_multi) {
           const int frame_lf_count =
               av1_num_planes(cm) > 1 ? FRAME_LF_COUNT : FRAME_LF_COUNT - 2;
           for (int lf_id = 0; lf_id < frame_lf_count; ++lf_id) {
             int reduced_delta_lflevel =
-                (mbmi->curr_delta_lf[lf_id] - xd->prev_delta_lf[lf_id]) /
+                (mbmi->delta_lf[lf_id] - xd->delta_lf[lf_id]) /
                 cm->delta_lf_res;
             write_delta_lflevel(cm, xd, lf_id, reduced_delta_lflevel, w);
-            xd->prev_delta_lf[lf_id] = mbmi->curr_delta_lf[lf_id];
+            xd->delta_lf[lf_id] = mbmi->delta_lf[lf_id];
           }
         } else {
           int reduced_delta_lflevel =
-              (mbmi->current_delta_lf_from_base - xd->prev_delta_lf_from_base) /
+              (mbmi->delta_lf_from_base - xd->delta_lf_from_base) /
               cm->delta_lf_res;
           write_delta_lflevel(cm, xd, -1, reduced_delta_lflevel, w);
-          xd->prev_delta_lf_from_base = mbmi->current_delta_lf_from_base;
+          xd->delta_lf_from_base = mbmi->delta_lf_from_base;
         }
       }
     }
@@ -1711,13 +1711,9 @@ static void write_modes(AV1_COMP *const cpi, const TileInfo *const tile,
   av1_init_above_context(cm, xd, tile->tile_row);
 
   if (cpi->common.delta_q_present_flag) {
-    xd->prev_qindex = cpi->common.base_qindex;
+    xd->current_qindex = cpi->common.base_qindex;
     if (cpi->common.delta_lf_present_flag) {
-      const int frame_lf_count =
-          av1_num_planes(cm) > 1 ? FRAME_LF_COUNT : FRAME_LF_COUNT - 2;
-      for (int lf_id = 0; lf_id < frame_lf_count; ++lf_id)
-        xd->prev_delta_lf[lf_id] = 0;
-      xd->prev_delta_lf_from_base = 0;
+      av1_reset_loop_filter_delta(xd, av1_num_planes(cm));
     }
   }
 
@@ -2310,7 +2306,7 @@ static int get_refresh_mask(AV1_COMP *cpi) {
 
 static INLINE int find_identical_tile(
     const int tile_row, const int tile_col,
-    TileBufferEnc (*const tile_buffers)[1024]) {
+    TileBufferEnc (*const tile_buffers)[MAX_TILE_COLS]) {
   const MV32 candidate_offset[1] = { { 1, 0 } };
   const uint8_t *const cur_tile_data =
       tile_buffers[tile_row][tile_col].data + 4;
@@ -2361,7 +2357,7 @@ static INLINE int find_identical_tile(
 
 static void write_render_size(const AV1_COMMON *cm,
                               struct aom_write_bit_buffer *wb) {
-  const int scaling_active = !av1_resize_unscaled(cm);
+  const int scaling_active = av1_resize_scaled(cm);
   aom_wb_write_bit(wb, scaling_active);
   if (scaling_active) {
     aom_wb_write_literal(wb, cm->render_width - 1, 16);
@@ -2520,40 +2516,20 @@ static void write_color_config(AV1_COMMON *const cm,
 
 static void write_timing_info_header(AV1_COMMON *const cm,
                                      struct aom_write_bit_buffer *wb) {
-#if !CONFIG_BUFFER_MODEL
-  aom_wb_write_bit(wb, cm->timing_info_present);  // timing info present flag
-
-  if (cm->timing_info_present) {
-#endif
-#if CONFIG_BUFFER_MODEL
-    aom_wb_write_unsigned_literal(wb, cm->timing_info.num_units_in_display_tick,
-                                  32);  // Number of units in tick
-    aom_wb_write_unsigned_literal(wb, cm->timing_info.time_scale,
-                                  32);  // Time scale
-    aom_wb_write_bit(
-        wb,
-        cm->timing_info.equal_picture_interval);  // Equal picture interval bit
-    if (cm->timing_info.equal_picture_interval) {
-      aom_wb_write_uvlc(
-          wb,
-          cm->timing_info.num_ticks_per_picture - 1);  // ticks per picture
-#else
-  aom_wb_write_unsigned_literal(wb, cm->num_units_in_tick,
+  aom_wb_write_unsigned_literal(wb, cm->timing_info.num_units_in_display_tick,
                                 32);  // Number of units in tick
-  aom_wb_write_unsigned_literal(wb, cm->time_scale, 32);  // Time scale
-  aom_wb_write_bit(wb,
-                   cm->equal_picture_interval);  // Equal picture interval bit
-  if (cm->equal_picture_interval) {
-    aom_wb_write_uvlc(wb,
-                      cm->num_ticks_per_picture - 1);  // ticks per picture
-#endif
-    }
-#if !CONFIG_BUFFER_MODEL
+  aom_wb_write_unsigned_literal(wb, cm->timing_info.time_scale,
+                                32);  // Time scale
+  aom_wb_write_bit(
+      wb,
+      cm->timing_info.equal_picture_interval);  // Equal picture interval bit
+  if (cm->timing_info.equal_picture_interval) {
+    aom_wb_write_uvlc(
+        wb,
+        cm->timing_info.num_ticks_per_picture - 1);  // ticks per picture
   }
-#endif
 }
 
-#if CONFIG_BUFFER_MODEL
 static void write_decoder_model_info(AV1_COMMON *const cm,
                                      struct aom_write_bit_buffer *wb) {
   aom_wb_write_literal(wb, cm->buffer_model.bitrate_scale, 4);
@@ -2602,7 +2578,6 @@ static void write_tu_pts_info(AV1_COMMON *const cm,
       wb, (uint32_t)cm->tu_presentation_delay,
       cm->buffer_model.frame_presentation_delay_length);
 }
-#endif
 
 static void write_film_grain_params(AV1_COMP *cpi,
                                     struct aom_write_bit_buffer *wb) {
@@ -3009,12 +2984,10 @@ static void write_uncompressed_header_obu(AV1_COMP *cpi,
       aom_wb_write_bit(wb, 1);  // show_existing_frame
       aom_wb_write_literal(wb, cpi->existing_fb_idx_to_show, 3);
 
-#if CONFIG_BUFFER_MODEL
-      if (cm->decoder_model_info_present_flag &&
+      if (cm->seq_params.decoder_model_info_present_flag &&
           cm->timing_info.equal_picture_interval == 0) {
         write_tu_pts_info(cm, wb);
       }
-#endif
       if (cm->seq_params.frame_id_numbers_present_flag) {
         int frame_id_len = cm->seq_params.frame_id_length;
         int display_frame_id = cm->ref_frame_id[cpi->existing_fb_idx_to_show];
@@ -3036,15 +3009,11 @@ static void write_uncompressed_header_obu(AV1_COMP *cpi,
     aom_wb_write_literal(wb, cm->frame_type, 2);
 
     aom_wb_write_bit(wb, cm->show_frame);
-#if CONFIG_BUFFER_MODEL
     if (cm->show_frame) {
-      if (cm->decoder_model_info_present_flag &&
+      if (cm->seq_params.decoder_model_info_present_flag &&
           cm->timing_info.equal_picture_interval == 0)
         write_tu_pts_info(cm, wb);
     } else {
-#else
-    if (!cm->show_frame) {
-#endif
       aom_wb_write_bit(wb, cm->showable_frame);
     }
     if (frame_is_sframe(cm)) {
@@ -3106,28 +3075,28 @@ static void write_uncompressed_header_obu(AV1_COMP *cpi,
     }
   }
 
-#if CONFIG_BUFFER_MODEL
-  if (cm->decoder_model_info_present_flag) {
+  if (cm->seq_params.decoder_model_info_present_flag) {
     aom_wb_write_bit(wb, cm->buffer_removal_delay_present);
     if (cm->buffer_removal_delay_present) {
-      for (int op_num = 0; op_num < cm->operating_points_decoder_model_cnt;
-           op_num++) {
-        if (((cm->op_params[op_num].decoder_model_operating_point_idc >>
-              cm->temporal_layer_id) &
-                 0x1 &&
-             (cm->op_params[op_num].decoder_model_operating_point_idc >>
-              (cm->spatial_layer_id + 8)) &
-                 0x1) ||
-            cm->op_params[op_num].decoder_model_operating_point_idc == 0) {
-          aom_wb_write_literal(
-              wb, (uint32_t)cm->op_frame_timing[op_num].buffer_removal_delay,
-              cm->buffer_model.buffer_removal_delay_length);
-          cm->op_frame_timing[op_num].buffer_removal_delay++;
+      for (int op_num = 0;
+           op_num < cm->seq_params.operating_points_cnt_minus_1 + 1; op_num++) {
+        if (cm->op_params[op_num].decoder_model_param_present_flag) {
+          if (((cm->seq_params.operating_point_idc[op_num] >>
+                cm->temporal_layer_id) &
+                   0x1 &&
+               (cm->seq_params.operating_point_idc[op_num] >>
+                (cm->spatial_layer_id + 8)) &
+                   0x1) ||
+              cm->seq_params.operating_point_idc[op_num] == 0) {
+            aom_wb_write_literal(
+                wb, (uint32_t)cm->op_frame_timing[op_num].buffer_removal_delay,
+                cm->buffer_model.buffer_removal_delay_length);
+            cm->op_frame_timing[op_num].buffer_removal_delay++;
+          }
         }
       }
     }
   }
-#endif
   cpi->refresh_frame_mask = get_refresh_mask(cpi);
   if (cm->frame_type == KEY_FRAME) {
     if (!cm->show_frame) {  // unshown keyframe (forward keyframe)
@@ -3196,16 +3165,16 @@ static void write_uncompressed_header_obu(AV1_COMP *cpi,
 
   if (cm->frame_type == KEY_FRAME) {
     write_frame_size(cm, frame_size_override_flag, wb);
-    assert(av1_superres_unscaled(cm) || !cm->allow_intrabc);
-    if (cm->allow_screen_content_tools && av1_superres_unscaled(cm))
+    assert(!av1_superres_scaled(cm) || !cm->allow_intrabc);
+    if (cm->allow_screen_content_tools && !av1_superres_scaled(cm))
       aom_wb_write_bit(wb, cm->allow_intrabc);
     // all eight fbs are refreshed, pick one that will live long enough
     cm->fb_of_context_type[REGULAR_FRAME] = 0;
   } else {
     if (cm->frame_type == INTRA_ONLY_FRAME) {
       write_frame_size(cm, frame_size_override_flag, wb);
-      assert(av1_superres_unscaled(cm) || !cm->allow_intrabc);
-      if (cm->allow_screen_content_tools && av1_superres_unscaled(cm))
+      assert(!av1_superres_scaled(cm) || !cm->allow_intrabc);
+      if (cm->allow_screen_content_tools && !av1_superres_scaled(cm))
         aom_wb_write_bit(wb, cm->allow_intrabc);
     } else if (cm->frame_type == INTER_FRAME || frame_is_sframe(cm)) {
       MV_REFERENCE_FRAME ref_frame;
@@ -3297,25 +3266,21 @@ static void write_uncompressed_header_obu(AV1_COMP *cpi,
     aom_wb_write_bit(wb, cm->delta_q_present_flag);
     if (cm->delta_q_present_flag) {
       aom_wb_write_literal(wb, OD_ILOG_NZ(cm->delta_q_res) - 1, 2);
-      xd->prev_qindex = cm->base_qindex;
+      xd->current_qindex = cm->base_qindex;
       if (cm->allow_intrabc)
         assert(cm->delta_lf_present_flag == 0);
       else
         aom_wb_write_bit(wb, cm->delta_lf_present_flag);
       if (cm->delta_lf_present_flag) {
         aom_wb_write_literal(wb, OD_ILOG_NZ(cm->delta_lf_res) - 1, 2);
-        xd->prev_delta_lf_from_base = 0;
         aom_wb_write_bit(wb, cm->delta_lf_multi);
-        const int frame_lf_count =
-            av1_num_planes(cm) > 1 ? FRAME_LF_COUNT : FRAME_LF_COUNT - 2;
-        for (int lf_id = 0; lf_id < frame_lf_count; ++lf_id)
-          xd->prev_delta_lf[lf_id] = 0;
+        av1_reset_loop_filter_delta(xd, av1_num_planes(cm));
       }
     }
   }
 
   if (cm->all_lossless) {
-    assert(av1_superres_unscaled(cm));
+    assert(!av1_superres_scaled(cm));
   } else {
     if (!cm->coded_lossless) {
       encode_loopfilter(cm, wb);
@@ -3551,8 +3516,7 @@ static void write_bitstream_level(BitstreamLevel bl,
   aom_wb_write_literal(wb, seq_level_idx, LEVEL_BITS);
 }
 
-static uint32_t write_sequence_header_obu(AV1_COMP *cpi, uint8_t *const dst,
-                                          uint8_t number_spatial_layers) {
+static uint32_t write_sequence_header_obu(AV1_COMP *cpi, uint8_t *const dst) {
   AV1_COMMON *const cm = &cpi->common;
   struct aom_write_bit_buffer wb = { dst, 0 };
   uint32_t size = 0;
@@ -3569,43 +3533,41 @@ static uint32_t write_sequence_header_obu(AV1_COMP *cpi, uint8_t *const dst,
   if (cm->seq_params.reduced_still_picture_hdr) {
     write_bitstream_level(cm->seq_params.level[0], &wb);
   } else {
-    uint8_t operating_points_cnt_minus_1 =
-        number_spatial_layers > 1 ? number_spatial_layers - 1 : 0;
-    aom_wb_write_literal(&wb, operating_points_cnt_minus_1,
+    aom_wb_write_bit(&wb, cm->seq_params.decoder_model_info_present_flag);
+    if (cm->seq_params.decoder_model_info_present_flag) {
+      write_decoder_model_info(cm, &wb);
+    }
+    aom_wb_write_bit(&wb, cm->seq_params.display_model_info_present_flag);
+    aom_wb_write_literal(&wb, cm->seq_params.operating_points_cnt_minus_1,
                          OP_POINTS_CNT_MINUS_1_BITS);
     int i;
-    if (operating_points_cnt_minus_1 == 0) {
-      cm->seq_params.operating_point_idc[0] = 0;
-    } else {
-      // Set operating_point_idc[] such that for the i-th operating point the
-      // first (operating_points_cnt-i) spatial layers and the first temporal
-      // layer are decoded Note that highest quality operating point should come
-      // first
-      for (i = 0; i < operating_points_cnt_minus_1 + 1; i++)
-        cm->seq_params.operating_point_idc[i] =
-            (~(~0u << (operating_points_cnt_minus_1 + 1 - i)) << 8) | 1;
-    }
-
-    for (i = 0; i < operating_points_cnt_minus_1 + 1; i++) {
+    for (i = 0; i < cm->seq_params.operating_points_cnt_minus_1 + 1; i++) {
       aom_wb_write_literal(&wb, cm->seq_params.operating_point_idc[i],
                            OP_POINTS_IDC_BITS);
       write_bitstream_level(cm->seq_params.level[i], &wb);
       if (cm->seq_params.level[i].major > 3)
         aom_wb_write_bit(&wb, cm->seq_params.tier[i]);
-#if !CONFIG_BUFFER_MODEL
-      aom_wb_write_literal(&wb, 0, 1);  // decoder_rate_model_present_flag[i]
-#endif
+      if (cm->seq_params.decoder_model_info_present_flag) {
+        aom_wb_write_bit(&wb,
+                         cm->op_params[i].decoder_model_param_present_flag);
+        if (cm->op_params[i].decoder_model_param_present_flag)
+          write_dec_model_op_parameters(cm, &wb, i);
+      }
+      if (cm->seq_params.display_model_info_present_flag) {
+        aom_wb_write_bit(&wb,
+                         cm->op_params[i].display_model_param_present_flag);
+        if (cm->op_params[i].display_model_param_present_flag) {
+          assert(cm->op_params[i].initial_display_delay <= 10);
+          aom_wb_write_literal(&wb, cm->op_params[i].initial_display_delay - 1,
+                               4);
+        }
+      }
     }
   }
   write_sequence_header(cpi, &wb);
 
   write_color_config(cm, &wb);
 
-#if !CONFIG_BUFFER_MODEL
-  // timing_info
-  if (!cm->seq_params.reduced_still_picture_hdr)
-    write_timing_info_header(cm, &wb);
-#else
   if (!cm->seq_params.reduced_still_picture_hdr)
     aom_wb_write_bit(&wb, cm->timing_info_present);  // timing info present flag
   else
@@ -3614,33 +3576,8 @@ static uint32_t write_sequence_header_obu(AV1_COMP *cpi, uint8_t *const dst,
   if (cm->timing_info_present) {
     // timing_info
     write_timing_info_header(cm, &wb);
-    aom_wb_write_bit(&wb, cm->decoder_model_info_present_flag);
-    if (cm->decoder_model_info_present_flag) write_decoder_model_info(cm, &wb);
   }
 
-  if (cm->operating_points_decoder_model_cnt > 0) {
-    aom_wb_write_bit(&wb, 1);
-    aom_wb_write_literal(&wb, cm->operating_points_decoder_model_cnt - 1, 5);
-  } else {
-    aom_wb_write_bit(&wb, 0);
-  }
-  for (int op_num = 0; op_num < cm->operating_points_decoder_model_cnt;
-       ++op_num) {
-    aom_wb_write_literal(
-        &wb, cm->op_params[op_num].decoder_model_operating_point_idc, 12);
-    aom_wb_write_bit(&wb,
-                     cm->op_params[op_num].display_model_param_present_flag);
-    if (cm->op_params[op_num].display_model_param_present_flag)
-      aom_wb_write_literal(&wb, cm->op_params[op_num].initial_display_delay - 1,
-                           4);
-    if (cm->decoder_model_info_present_flag) {
-      aom_wb_write_bit(&wb,
-                       cm->op_params[op_num].decoder_model_param_present_flag);
-      if (cm->op_params[op_num].decoder_model_param_present_flag)
-        write_dec_model_op_parameters(cm, &wb, op_num);
-    }
-  }
-#endif
   aom_wb_write_bit(&wb, cm->film_grain_params_present);
 
   add_trailing_bits(&wb);
@@ -4038,7 +3975,6 @@ int av1_pack_bitstream(AV1_COMP *const cpi, uint8_t *dst, size_t *size) {
   uint32_t obu_header_size = 0;
   uint32_t obu_payload_size = 0;
   FrameHeaderInfo fh_info = { NULL, 0, 0 };
-  const uint8_t number_spatial_layers = cm->number_spatial_layers;
   const uint8_t obu_extension_header =
       cm->temporal_layer_id << 5 | cm->spatial_layer_id << 3 | 0;
 
@@ -4052,8 +3988,7 @@ int av1_pack_bitstream(AV1_COMP *const cpi, uint8_t *dst, size_t *size) {
   if (cm->frame_type == KEY_FRAME) {
     obu_header_size = write_obu_header(OBU_SEQUENCE_HEADER, 0, data);
 
-    obu_payload_size = write_sequence_header_obu(cpi, data + obu_header_size,
-                                                 number_spatial_layers);
+    obu_payload_size = write_sequence_header_obu(cpi, data + obu_header_size);
     const size_t length_field_size =
         obu_memmove(obu_header_size, obu_payload_size, data);
     if (write_uleb_obu_size(obu_header_size, obu_payload_size, data) !=

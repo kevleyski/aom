@@ -12,6 +12,7 @@
 #define AV1_COMMON_ARM_MEM_NEON_H_
 
 #include <arm_neon.h>
+#include <string.h>
 
 static INLINE void store_row2_u8_8x8(uint8_t *s, int p, const uint8x8_t s0,
                                      const uint8x8_t s1) {
@@ -65,6 +66,19 @@ static INLINE void load_u16_4x4(const uint16_t *s, const ptrdiff_t p,
   *s2 = vld1_u16(s);
   s += p;
   *s3 = vld1_u16(s);
+  s += p;
+}
+
+static INLINE void load_u16_8x4(const uint16_t *s, const ptrdiff_t p,
+                                uint16x8_t *const s0, uint16x8_t *const s1,
+                                uint16x8_t *const s2, uint16x8_t *const s3) {
+  *s0 = vld1q_u16(s);
+  s += p;
+  *s1 = vld1q_u16(s);
+  s += p;
+  *s2 = vld1q_u16(s);
+  s += p;
+  *s3 = vld1q_u16(s);
   s += p;
 }
 
@@ -122,6 +136,18 @@ static INLINE void store_u8_8x8(uint8_t *s, ptrdiff_t p, const uint8x8_t s0,
   vst1_u8(s, s6);
   s += p;
   vst1_u8(s, s7);
+}
+
+static INLINE void store_u8_8x4(uint8_t *s, ptrdiff_t p, const uint8x8_t s0,
+                                const uint8x8_t s1, const uint8x8_t s2,
+                                const uint8x8_t s3) {
+  vst1_u8(s, s0);
+  s += p;
+  vst1_u8(s, s1);
+  s += p;
+  vst1_u8(s, s2);
+  s += p;
+  vst1_u8(s, s3);
 }
 
 static INLINE void store_u16_8x8(uint16_t *s, ptrdiff_t dst_stride,
@@ -190,6 +216,87 @@ static INLINE void store_s16_8x8(int16_t *s, ptrdiff_t dst_stride,
   vst1q_s16(s, s6);
   s += dst_stride;
   vst1q_s16(s, s7);
+}
+
+static INLINE void load_s16_8x8(const int16_t *s, ptrdiff_t p,
+                                int16x8_t *const s0, int16x8_t *const s1,
+                                int16x8_t *const s2, int16x8_t *const s3,
+                                int16x8_t *const s4, int16x8_t *const s5,
+                                int16x8_t *const s6, int16x8_t *const s7) {
+  *s0 = vld1q_s16(s);
+  s += p;
+  *s1 = vld1q_s16(s);
+  s += p;
+  *s2 = vld1q_s16(s);
+  s += p;
+  *s3 = vld1q_s16(s);
+  s += p;
+  *s4 = vld1q_s16(s);
+  s += p;
+  *s5 = vld1q_s16(s);
+  s += p;
+  *s6 = vld1q_s16(s);
+  s += p;
+  *s7 = vld1q_s16(s);
+}
+
+static INLINE void load_s16_8x4(const int16_t *s, ptrdiff_t p,
+                                int16x8_t *const s0, int16x8_t *const s1,
+                                int16x8_t *const s2, int16x8_t *const s3) {
+  *s0 = vld1q_s16(s);
+  s += p;
+  *s1 = vld1q_s16(s);
+  s += p;
+  *s2 = vld1q_s16(s);
+  s += p;
+  *s3 = vld1q_s16(s);
+}
+
+static INLINE void load_unaligned_u8_4x8(const uint8_t *buf, int stride,
+                                         uint32x2_t *tu0, uint32x2_t *tu1,
+                                         uint32x2_t *tu2, uint32x2_t *tu3) {
+  uint32_t a;
+
+  memcpy(&a, buf, 4);
+  buf += stride;
+  *tu0 = vset_lane_u32(a, *tu0, 0);
+  memcpy(&a, buf, 4);
+  buf += stride;
+  *tu0 = vset_lane_u32(a, *tu0, 1);
+  memcpy(&a, buf, 4);
+  buf += stride;
+  *tu1 = vset_lane_u32(a, *tu1, 0);
+  memcpy(&a, buf, 4);
+  buf += stride;
+  *tu1 = vset_lane_u32(a, *tu1, 1);
+  memcpy(&a, buf, 4);
+  buf += stride;
+  *tu2 = vset_lane_u32(a, *tu2, 0);
+  memcpy(&a, buf, 4);
+  buf += stride;
+  *tu2 = vset_lane_u32(a, *tu2, 1);
+  memcpy(&a, buf, 4);
+  buf += stride;
+  *tu3 = vset_lane_u32(a, *tu3, 0);
+  memcpy(&a, buf, 4);
+  *tu3 = vset_lane_u32(a, *tu3, 1);
+}
+
+static INLINE void load_unaligned_u8_4x4(const uint8_t *buf, int stride,
+                                         uint32x2_t *tu0, uint32x2_t *tu1) {
+  uint32_t a;
+
+  memcpy(&a, buf, 4);
+  buf += stride;
+  *tu0 = vset_lane_u32(a, *tu0, 0);
+  memcpy(&a, buf, 4);
+  buf += stride;
+  *tu0 = vset_lane_u32(a, *tu0, 1);
+  memcpy(&a, buf, 4);
+  buf += stride;
+  *tu1 = vset_lane_u32(a, *tu1, 0);
+  memcpy(&a, buf, 4);
+  *tu1 = vset_lane_u32(a, *tu1, 1);
 }
 
 #endif  // AV1_COMMON_ARM_MEM_NEON_H_

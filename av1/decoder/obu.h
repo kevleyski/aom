@@ -16,10 +16,13 @@
 #include "av1/decoder/decoder.h"
 
 typedef struct {
-  size_t size;
+  size_t size;  // Size (1 or 2 bytes) of the OBU header (including the
+                // optional OBU extension header) in the bitstream.
   OBU_TYPE type;
-  int has_length_field;
+  int has_size_field;
   int has_extension;
+  // The following fields come from the OBU extension header and therefore are
+  // only used if has_extension is true.
   int temporal_layer_id;
   int spatial_layer_id;
 } ObuHeader;
@@ -35,9 +38,14 @@ aom_codec_err_t aom_read_obu_header_and_size(const uint8_t *data,
                                              size_t *const payload_size,
                                              size_t *const bytes_read);
 
-void aom_decode_frame_from_obus(struct AV1Decoder *pbi, const uint8_t *data,
-                                const uint8_t *data_end,
-                                const uint8_t **p_data_end);
+// Try to decode one frame from a buffer.
+// Returns 1 if we decoded a frame,
+//         0 if we didn't decode a frame but that's okay
+//           (eg, if there was a frame but we skipped it),
+//     or -1 on error
+int aom_decode_frame_from_obus(struct AV1Decoder *pbi, const uint8_t *data,
+                               const uint8_t *data_end,
+                               const uint8_t **p_data_end);
 
 aom_codec_err_t aom_get_num_layers_from_operating_point_idc(
     int operating_point_idc, unsigned int *num_spatial_layers,

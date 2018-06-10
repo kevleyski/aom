@@ -99,10 +99,26 @@ endif()
 
 if(CONFIG_AV1_DECODER)
   set(AOM_DOXYGEN_EXAMPLE_SOURCES ${AOM_DOXYGEN_EXAMPLE_SOURCES}
+      "${AOM_ROOT}/examples/lightfield_tile_list_decoder.c")
+
+  set(AOM_DOXYGEN_EXAMPLE_DESCRIPTIONS ${AOM_DOXYGEN_EXAMPLE_DESCRIPTIONS}
+      "Lightfield tile list decoder example.")
+endif()
+
+if(CONFIG_AV1_DECODER)
+  set(AOM_DOXYGEN_EXAMPLE_SOURCES ${AOM_DOXYGEN_EXAMPLE_SOURCES}
       "${AOM_ROOT}/examples/lightfield_decoder.c")
 
   set(AOM_DOXYGEN_EXAMPLE_DESCRIPTIONS ${AOM_DOXYGEN_EXAMPLE_DESCRIPTIONS}
       "Lightfield decoder example.")
+endif()
+
+if(CONFIG_AV1_DECODER AND CONFIG_AV1_ENCODER)
+  set(AOM_DOXYGEN_EXAMPLE_SOURCES ${AOM_DOXYGEN_EXAMPLE_SOURCES}
+      "${AOM_ROOT}/examples/lightfield_bitstream_parsing.c")
+
+  set(AOM_DOXYGEN_EXAMPLE_DESCRIPTIONS ${AOM_DOXYGEN_EXAMPLE_DESCRIPTIONS}
+      "Lightfield bitstream parsing example.")
 endif()
 
 # Iterates over list named by $list_name and appends each item to $AOM_DOXYFILE

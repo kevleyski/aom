@@ -39,14 +39,12 @@ class TileIndependenceTest
     inv_dec_ = codec_->CreateDecoder(cfg, 0);
     inv_dec_->Control(AV1_INVERT_TILE_DECODE_ORDER, 1);
 
-#if CONFIG_AV1
     if (fw_dec_->IsAV1() && inv_dec_->IsAV1()) {
       fw_dec_->Control(AV1_SET_DECODE_TILE_ROW, -1);
       fw_dec_->Control(AV1_SET_DECODE_TILE_COL, -1);
       inv_dec_->Control(AV1_SET_DECODE_TILE_ROW, -1);
       inv_dec_->Control(AV1_SET_DECODE_TILE_COL, -1);
     }
-#endif
   }
 
   virtual ~TileIndependenceTest() {
@@ -148,7 +146,7 @@ AV1_INSTANTIATE_TEST_CASE(TileIndependenceTestLarge, ::testing::Values(0, 1),
 
 class TileIndependenceLSTest : public TileIndependenceTest {};
 
-TEST_P(TileIndependenceLSTest, MD5Match) {
+TEST_P(TileIndependenceLSTest, DISABLED_MD5Match) {
   cfg_.large_scale_tile = 1;
   fw_dec_->Control(AV1_SET_TILE_MODE, 1);
   inv_dec_->Control(AV1_SET_TILE_MODE, 1);
@@ -157,7 +155,7 @@ TEST_P(TileIndependenceLSTest, MD5Match) {
 
 class TileIndependenceLSTestLarge : public TileIndependenceTestLarge {};
 
-TEST_P(TileIndependenceLSTestLarge, MD5Match) {
+TEST_P(TileIndependenceLSTestLarge, DISABLED_MD5Match) {
   cfg_.large_scale_tile = 1;
   fw_dec_->Control(AV1_SET_TILE_MODE, 1);
   inv_dec_->Control(AV1_SET_TILE_MODE, 1);

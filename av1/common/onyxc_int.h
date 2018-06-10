@@ -28,9 +28,7 @@
 #include "av1/common/quant_common.h"
 #include "av1/common/restoration.h"
 #include "av1/common/tile_common.h"
-#if CONFIG_BUFFER_MODEL
 #include "av1/common/timing.h"
-#endif
 #include "av1/common/odintrin.h"
 #include "av1/encoder/hash_motion.h"
 #include "aom_dsp/grain_synthesis.h"
@@ -231,15 +229,13 @@ typedef struct SequenceHeader {
                            //     enabled for that frame.
   int enable_cdef;         // To turn on/off CDEF
   int enable_restoration;  // To turn on/off loop restoration
+  int operating_points_cnt_minus_1;
   int operating_point_idc[MAX_NUM_OPERATING_POINTS];
+  int display_model_info_present_flag;
+  int decoder_model_info_present_flag;
   BitstreamLevel level[MAX_NUM_OPERATING_POINTS];
-  int tier[MAX_NUM_OPERATING_POINTS];
-  int decoder_rate_model_param_present_flag[MAX_NUM_OPERATING_POINTS];
-#if !CONFIG_BUFFER_MODEL
-  int decode_to_display_rate_ratio[MAX_NUM_OPERATING_POINTS];
-  int initial_display_delay[MAX_NUM_OPERATING_POINTS];
-  int extra_frame_buffers[MAX_NUM_OPERATING_POINTS];
-#endif
+  uint8_t tier[MAX_NUM_OPERATING_POINTS];  // seq_tier in the spec. One bit: 0
+                                           // or 1.
 } SequenceHeader;
 
 typedef struct AV1Common {
@@ -256,22 +252,13 @@ typedef struct AV1Common {
   int last_width;
   int last_height;
   int timing_info_present;
-#if !CONFIG_BUFFER_MODEL
-  uint32_t num_units_in_tick;
-  uint32_t time_scale;
-  int equal_picture_interval;
-  uint32_t num_ticks_per_picture;
-#else
   aom_timing_info_t timing_info;
-  int operating_points_decoder_model_cnt;
-  int decoder_model_info_present_flag;
   int buffer_removal_delay_present;
   aom_dec_model_info_t buffer_model;
   aom_dec_model_op_parameters_t op_params[MAX_NUM_OPERATING_POINTS + 1];
   aom_op_timing_info_t op_frame_timing[MAX_NUM_OPERATING_POINTS + 1];
   int tu_presentation_delay_flag;
   int64_t tu_presentation_delay;
-#endif
 
   // TODO(jkoleszar): this implies chroma ss right now, but could vary per
   // plane. Revisit as part of the future change to YV12_BUFFER_CONFIG to
@@ -428,6 +415,7 @@ typedef struct AV1Common {
 
   // Pointer to a scratch buffer used by self-guided restoration
   int32_t *rst_tmpbuf;
+  RestorationLineBuffers *rlbs;
 
   // Output of loop restoration
   YV12_BUFFER_CONFIG rst_frame;
@@ -745,7 +733,6 @@ static INLINE void av1_init_macroblockd(AV1_COMMON *cm, MACROBLOCKD *xd,
       }
     }
   }
-  xd->fc = cm->fc;
   xd->mi_stride = cm->mi_stride;
   xd->error_info = &cm->error;
   cfl_init(&xd->cfl, cm);
@@ -1347,7 +1334,10 @@ static INLINE int is_valid_seq_level_idx(uint8_t seq_level_idx) {
 
 static INLINE uint8_t major_minor_to_seq_level_idx(BitstreamLevel bl) {
   assert(bl.major >= LEVEL_MAJOR_MIN && bl.major <= LEVEL_MAJOR_MAX);
-  assert(bl.minor >= LEVEL_MINOR_MIN && bl.minor <= LEVEL_MINOR_MAX);
+  // Since bl.minor is unsigned a comparison will return a warning:
+  // comparison is always true due to limited range of data type
+  assert(LEVEL_MINOR_MIN == 0);
+  assert(bl.minor <= LEVEL_MINOR_MAX);
   return ((bl.major - LEVEL_MAJOR_MIN) << LEVEL_MINOR_BITS) + bl.minor;
 }
 

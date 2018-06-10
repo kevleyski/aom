@@ -13,8 +13,7 @@
 #include <string.h>
 
 #include "config/aom_config.h"
-
-#include "./aom_version.h"
+#include "config/aom_version.h"
 
 #include "aom/internal/aom_codec_internal.h"
 #include "aom/aomdx.h"
@@ -60,6 +59,8 @@ struct aom_codec_alg_priv {
   int decode_tile_row;
   int decode_tile_col;
   unsigned int tile_mode;
+  unsigned int ext_tile_debug;
+  EXTERNAL_REFERENCES ext_refs;
   unsigned int is_annexb;
   int operating_point;
 
@@ -156,36 +157,32 @@ static aom_codec_err_t decoder_destroy(aom_codec_alg_priv_t *ctx) {
   return AOM_CODEC_OK;
 }
 
+// Parses the operating points (including operating_point_idc, seq_level_idx,
+// and seq_tier) and then sets si->number_spatial_layers and
+// si->number_temporal_layers based on operating_point_idc[0].
 static aom_codec_err_t parse_operating_points(struct aom_read_bit_buffer *rb,
                                               int is_reduced_header,
                                               aom_codec_stream_info_t *si) {
+  int operating_point_idc0 = 0;
+
   if (is_reduced_header) {
     aom_rb_read_literal(rb, LEVEL_BITS);  // level
   } else {
     const uint8_t operating_points_cnt_minus_1 =
         aom_rb_read_literal(rb, OP_POINTS_CNT_MINUS_1_BITS);
-    int operating_point_idc0 = 0;
     for (int i = 0; i < operating_points_cnt_minus_1 + 1; i++) {
       int operating_point_idc;
       operating_point_idc = aom_rb_read_literal(rb, OP_POINTS_IDC_BITS);
       if (i == 0) operating_point_idc0 = operating_point_idc;
       int seq_level_idx = aom_rb_read_literal(rb, LEVEL_BITS);  // level
       if (seq_level_idx > 7) aom_rb_read_bit(rb);               // tier
-#if !CONFIG_BUFFER_MODEL
-      if (aom_rb_read_literal(rb,
-                              1)) {   // decoder_rate_model_param_present_flag
-        aom_rb_read_literal(rb, 12);  // decode_to_display_rate_ratio
-        aom_rb_read_literal(rb, 24);  // initial_display_delay
-        aom_rb_read_literal(rb, 4);   // extra_frame_buffers
-      }
-#endif  // !CONFIG_BUFFER_MODEL
     }
+  }
 
-    if (aom_get_num_layers_from_operating_point_idc(
-            operating_point_idc0, &si->number_spatial_layers,
-            &si->number_temporal_layers) != AOM_CODEC_OK) {
-      return AOM_CODEC_ERROR;
-    }
+  if (aom_get_num_layers_from_operating_point_idc(
+          operating_point_idc0, &si->number_spatial_layers,
+          &si->number_temporal_layers) != AOM_CODEC_OK) {
+    return AOM_CODEC_ERROR;
   }
 
   return AOM_CODEC_OK;
@@ -423,6 +420,8 @@ static aom_codec_err_t init_decoder(aom_codec_alg_priv_t *ctx) {
     frame_worker_data->pbi->dec_tile_row = ctx->decode_tile_row;
     frame_worker_data->pbi->dec_tile_col = ctx->decode_tile_col;
     frame_worker_data->pbi->operating_point = ctx->operating_point;
+    frame_worker_data->pbi->ext_tile_debug = ctx->ext_tile_debug;
+
     worker->hook = (AVxWorkerHook)frame_worker_hook;
     if (!winterface->reset(worker)) {
       set_error_detail(ctx, "Frame Worker thread creation failed");
@@ -481,6 +480,8 @@ static aom_codec_err_t decode_one(aom_codec_alg_priv_t *ctx,
   frame_worker_data->pbi->common.large_scale_tile = ctx->tile_mode;
   frame_worker_data->pbi->dec_tile_row = ctx->decode_tile_row;
   frame_worker_data->pbi->dec_tile_col = ctx->decode_tile_col;
+  frame_worker_data->pbi->ext_tile_debug = ctx->ext_tile_debug;
+  frame_worker_data->pbi->ext_refs = ctx->ext_refs;
 
   frame_worker_data->pbi->common.is_annexb = ctx->is_annexb;
 
@@ -668,7 +669,6 @@ static aom_image_t *decoder_get_frame(aom_codec_alg_priv_t *ctx,
           img = &ctx->img;
           img->temporal_id = cm->temporal_layer_id;
           img->spatial_id = cm->spatial_layer_id;
-          img->max_spatial_id = cm->number_spatial_layers - 1;
           return add_grain_if_needed(
               img, ctx->image_with_grain,
               &frame_worker_data->pbi->common.film_grain_params);
@@ -840,9 +840,9 @@ static aom_codec_err_t ctrl_get_frame_corrupted(aom_codec_alg_priv_t *ctx,
       AVxWorker *const worker = ctx->frame_workers;
       FrameWorkerData *const frame_worker_data =
           (FrameWorkerData *)worker->data1;
-      RefCntBuffer *const frame_bufs =
-          frame_worker_data->pbi->common.buffer_pool->frame_bufs;
-      if (frame_worker_data->pbi->common.frame_to_show == NULL)
+      AV1Decoder *const pbi = frame_worker_data->pbi;
+      RefCntBuffer *const frame_bufs = pbi->common.buffer_pool->frame_bufs;
+      if (pbi->seen_frame_header && pbi->output_frame == NULL)
         return AOM_CODEC_ERROR;
       if (ctx->last_show_frame >= 0)
         *corrupted = frame_bufs[ctx->last_show_frame].buf.corrupted;
@@ -874,6 +874,45 @@ static aom_codec_err_t ctrl_get_frame_size(aom_codec_alg_priv_t *ctx,
   }
 
   return AOM_CODEC_INVALID_PARAM;
+}
+
+static aom_codec_err_t ctrl_get_tile_data(aom_codec_alg_priv_t *ctx,
+                                          va_list args) {
+  aom_tile_data *const tile_data = va_arg(args, aom_tile_data *);
+
+  if (tile_data) {
+    if (ctx->frame_workers) {
+      AVxWorker *const worker = ctx->frame_workers;
+      FrameWorkerData *const frame_worker_data =
+          (FrameWorkerData *)worker->data1;
+      const AV1Decoder *pbi = frame_worker_data->pbi;
+      tile_data->coded_tile_data_size =
+          pbi->tile_buffers[pbi->dec_tile_row][pbi->dec_tile_col].size;
+      tile_data->coded_tile_data =
+          pbi->tile_buffers[pbi->dec_tile_row][pbi->dec_tile_col].data;
+      return AOM_CODEC_OK;
+    } else {
+      return AOM_CODEC_ERROR;
+    }
+  }
+
+  return AOM_CODEC_INVALID_PARAM;
+}
+
+static aom_codec_err_t ctrl_set_ext_ref_ptr(aom_codec_alg_priv_t *ctx,
+                                            va_list args) {
+  av1_ext_ref_frame_t *const data = va_arg(args, av1_ext_ref_frame_t *);
+
+  if (data) {
+    av1_ext_ref_frame_t *const ext_frames = data;
+    ctx->ext_refs.num = ext_frames->num;
+    for (int i = 0; i < ctx->ext_refs.num; i++) {
+      image2yuvconfig(ext_frames->img++, &ctx->ext_refs.refs[i]);
+    }
+    return AOM_CODEC_OK;
+  } else {
+    return AOM_CODEC_INVALID_PARAM;
+  }
 }
 
 static aom_codec_err_t ctrl_get_render_size(aom_codec_alg_priv_t *ctx,
@@ -1020,6 +1059,12 @@ static aom_codec_err_t ctrl_set_inspection_callback(aom_codec_alg_priv_t *ctx,
 #endif
 }
 
+static aom_codec_err_t ctrl_ext_tile_debug(aom_codec_alg_priv_t *ctx,
+                                           va_list args) {
+  ctx->ext_tile_debug = va_arg(args, int);
+  return AOM_CODEC_OK;
+}
+
 static aom_codec_ctrl_fn_map_t decoder_ctrl_maps[] = {
   { AV1_COPY_REFERENCE, ctrl_copy_reference },
 
@@ -1039,6 +1084,8 @@ static aom_codec_ctrl_fn_map_t decoder_ctrl_maps[] = {
   { AV1D_SET_IS_ANNEXB, ctrl_set_is_annexb },
   { AV1D_SET_OPERATING_POINT, ctrl_set_operating_point },
   { AV1_SET_INSPECTION_CALLBACK, ctrl_set_inspection_callback },
+  { AV1D_EXT_TILE_DEBUG, ctrl_ext_tile_debug },
+  { AV1D_SET_EXT_REF_PTR, ctrl_set_ext_ref_ptr },
 
   // Getters
   { AOMD_GET_FRAME_CORRUPTED, ctrl_get_frame_corrupted },
@@ -1051,6 +1098,7 @@ static aom_codec_ctrl_fn_map_t decoder_ctrl_maps[] = {
   { AV1_GET_NEW_FRAME_IMAGE, ctrl_get_new_frame_image },
   { AV1_COPY_NEW_FRAME_IMAGE, ctrl_copy_new_frame_image },
   { AV1_GET_REFERENCE, ctrl_get_reference },
+  { AV1D_GET_TILE_DATA, ctrl_get_tile_data },
 
   { -1, NULL },
 };

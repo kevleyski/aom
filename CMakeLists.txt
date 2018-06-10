@@ -31,7 +31,6 @@ option(ENABLE_WERROR "Converts warnings to errors at compile time." OFF)
 
 # ARM assembly/intrinsics flags.
 option(ENABLE_NEON "Enables NEON optimizations on ARM targets." ON)
-option(ENABLE_NEON_ASM "Enables NEON ASM optimizations on ARM targets." ON)
 
 # MIPS assembly/intrinsics flags.
 option(ENABLE_DSPR2 "Enables DSPR2 optimizations on MIPS targets." OFF)
@@ -189,7 +188,7 @@ list(APPEND AOM_ENCODER_STATS_SOURCES "${AOM_ROOT}/stats/aomstats.c"
 
 list(APPEND AOM_PKG_CONFIG_SOURCES "${AOM_CONFIG_DIR}/aom.pc")
 
-list(APPEND AOM_VERSION_SOURCES "${AOM_CONFIG_DIR}/aom_version.h")
+list(APPEND AOM_VERSION_SOURCES "${AOM_CONFIG_DIR}/config/aom_version.h")
 
 list(APPEND AOM_WEBM_DECODER_SOURCES "${AOM_ROOT}/common/webmdec.cc"
             "${AOM_ROOT}/common/webmdec.h")
@@ -203,7 +202,7 @@ include_directories(${AOM_ROOT} ${AOM_CONFIG_DIR} ${AOM_ROOT}/apps
 # Targets
 add_library(aom_version ${AOM_VERSION_SOURCES})
 add_dummy_source_file_to_target(aom_version c)
-add_custom_command(OUTPUT "${AOM_CONFIG_DIR}/aom_version.h"
+add_custom_command(OUTPUT "${AOM_CONFIG_DIR}/config/aom_version.h"
                    COMMAND ${CMAKE_COMMAND} ARGS
                            -DAOM_CONFIG_DIR=${AOM_CONFIG_DIR}
                            -DAOM_ROOT=${AOM_ROOT}
@@ -467,11 +466,30 @@ if(ENABLE_EXAMPLES AND CONFIG_AV1_ENCODER)
 endif()
 
 if(ENABLE_EXAMPLES AND CONFIG_AV1_DECODER)
+  add_executable(lightfield_tile_list_decoder
+                 "${AOM_ROOT}/examples/lightfield_tile_list_decoder.c"
+                 $<TARGET_OBJECTS:aom_common_app_util>
+                 $<TARGET_OBJECTS:aom_decoder_app_util>)
+  list(APPEND AOM_EXAMPLE_TARGETS lightfield_tile_list_decoder)
+  list(APPEND AOM_APP_TARGETS lightfield_tile_list_decoder)
+endif()
+
+if(ENABLE_EXAMPLES AND CONFIG_AV1_DECODER)
   add_executable(lightfield_decoder "${AOM_ROOT}/examples/lightfield_decoder.c"
                  $<TARGET_OBJECTS:aom_common_app_util>
                  $<TARGET_OBJECTS:aom_decoder_app_util>)
   list(APPEND AOM_EXAMPLE_TARGETS lightfield_decoder)
   list(APPEND AOM_APP_TARGETS lightfield_decoder)
+endif()
+
+if(ENABLE_EXAMPLES AND CONFIG_AV1_ENCODER AND CONFIG_AV1_DECODER)
+  add_executable(lightfield_bitstream_parsing
+                 "${AOM_ROOT}/examples/lightfield_bitstream_parsing.c"
+                 $<TARGET_OBJECTS:aom_common_app_util>
+                 $<TARGET_OBJECTS:aom_encoder_app_util>
+                 $<TARGET_OBJECTS:aom_decoder_app_util>)
+  list(APPEND AOM_EXAMPLE_TARGETS lightfield_bitstream_parsing)
+  list(APPEND AOM_APP_TARGETS lightfield_bitstream_parsing)
 endif()
 
 foreach(aom_app ${AOM_APP_TARGETS})
@@ -600,39 +618,44 @@ if(ENABLE_DOCS)
   endif()
 endif()
 
-# Aomedia install rule.
-list(APPEND AOM_INSTALL_INCS "${AOM_ROOT}/aom/aom.h"
-            "${AOM_ROOT}/aom/aom_codec.h" "${AOM_ROOT}/aom/aom_frame_buffer.h"
-            "${AOM_ROOT}/aom/aom_image.h" "${AOM_ROOT}/aom/aom_integer.h"
-            "${AOM_ROOT}/aom/aom.h")
+if(NOT (MSVC OR XCODE))
 
-if(CONFIG_AV1_DECODER)
-  if(ENABLE_EXAMPLES)
-    list(APPEND AOM_INSTALL_BINS aomdec)
+  # Aomedia install rule.
+  list(APPEND AOM_INSTALL_INCS "${AOM_ROOT}/aom/aom.h"
+              "${AOM_ROOT}/aom/aom_codec.h"
+              "${AOM_ROOT}/aom/aom_frame_buffer.h"
+              "${AOM_ROOT}/aom/aom_image.h" "${AOM_ROOT}/aom/aom_integer.h"
+              "${AOM_ROOT}/aom/aom.h")
+
+  if(CONFIG_AV1_DECODER)
+    if(ENABLE_EXAMPLES)
+      list(APPEND AOM_INSTALL_BINS aomdec)
+    endif()
+
+    list(APPEND AOM_INSTALL_INCS "${AOM_ROOT}/aom/aom_decoder.h"
+                "${AOM_ROOT}/aom/aomdx.h")
   endif()
 
-  list(APPEND AOM_INSTALL_INCS "${AOM_ROOT}/aom/aom_decoder.h"
-              "${AOM_ROOT}/aom/aomdx.h")
-endif()
+  if(CONFIG_AV1_ENCODER)
+    if(ENABLE_EXAMPLES)
+      list(APPEND AOM_INSTALL_BINS aomenc)
+    endif()
 
-if(CONFIG_AV1_ENCODER)
-  if(ENABLE_EXAMPLES)
-    list(APPEND AOM_INSTALL_BINS aomenc)
+    list(APPEND AOM_INSTALL_INCS "${AOM_ROOT}/aom/aomcx.h"
+                "${AOM_ROOT}/aom/aom_encoder.h")
   endif()
 
-  list(APPEND AOM_INSTALL_INCS "${AOM_ROOT}/aom/aomcx.h"
-              "${AOM_ROOT}/aom/aom_encoder.h")
-endif()
+  set(AOM_INSTALL_LIBS aom)
 
-set(AOM_INSTALL_LIBS aom)
+  install(FILES ${AOM_INSTALL_INCS} DESTINATION "${INCLUDE_INSTALL_DIR}/aom")
+  install(FILES "${AOM_CONFIG_DIR}/aom.pc" DESTINATION
+                "${LIB_INSTALL_DIR}/pkgconfig")
+  install(TARGETS ${AOM_INSTALL_LIBS} DESTINATION "${LIB_INSTALL_DIR}")
 
-install(FILES ${AOM_INSTALL_INCS} DESTINATION "${INCLUDE_INSTALL_DIR}/aom")
-install(FILES "${AOM_CONFIG_DIR}/aom.pc" DESTINATION
-              "${LIB_INSTALL_DIR}/pkgconfig")
-install(TARGETS ${AOM_INSTALL_LIBS} DESTINATION "${LIB_INSTALL_DIR}")
-
-if(ENABLE_EXAMPLES)
-  install(TARGETS ${AOM_INSTALL_BINS} DESTINATION "${CMAKE_INSTALL_PREFIX}/bin")
+  if(ENABLE_EXAMPLES)
+    install(TARGETS ${AOM_INSTALL_BINS} DESTINATION
+                    "${CMAKE_INSTALL_PREFIX}/bin")
+  endif()
 endif()
 
 # Aomedia dist rule.

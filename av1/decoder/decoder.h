@@ -50,10 +50,12 @@ typedef struct TileDataDec {
 typedef struct TileBufferDec {
   const uint8_t *data;
   size_t size;
-  const uint8_t *raw_data_end;  // The end of the raw tile buffer in the
-                                // bit stream.
-  int col;                      // only used with multi-threaded decoding
 } TileBufferDec;
+
+typedef struct EXTERNAL_REFERENCES {
+  YV12_BUFFER_CONFIG refs[MAX_EXTERNAL_REFERENCES];
+  int num;
+} EXTERNAL_REFERENCES;
 
 typedef struct AV1Decoder {
   DECLARE_ALIGNED(32, MACROBLOCKD, mb);
@@ -71,6 +73,8 @@ typedef struct AV1Decoder {
   AVxWorker *frame_worker_owner;  // frame_worker that owns this pbi.
   AVxWorker lf_worker;
   AV1LfSync lf_row_sync;
+  AV1LrSync lr_row_sync;
+  AV1LrStruct lr_ctxt;
   AVxWorker *tile_workers;
   int num_workers;
   DecWorkerData *thread_data;
@@ -79,6 +83,9 @@ typedef struct AV1Decoder {
   int allocated_tiles;
 
   TileBufferDec tile_buffers[MAX_TILE_ROWS][MAX_TILE_COLS];
+
+  YV12_BUFFER_CONFIG *output_frame;
+  int output_frame_index;  // Buffer pool index
 
   int allow_lowbitdepth;
   int max_threads;
@@ -104,7 +111,17 @@ typedef struct AV1Decoder {
 #endif
   int operating_point;
   int current_operating_point;
-  int dropped_obus;
+  int seen_frame_header;
+
+  // State if the camera frame header is already decoded while
+  // large_scale_tile = 1.
+  int camera_frame_header_ready;
+  int output_frame_width_in_tiles_minus_1;
+  int output_frame_height_in_tiles_minus_1;
+  int tile_count_minus_1;
+  uint32_t coded_tile_data_size;
+  unsigned int ext_tile_debug;  // for ext-tile software debug & testing
+  EXTERNAL_REFERENCES ext_refs;
 } AV1Decoder;
 
 int av1_receive_compressed_data(struct AV1Decoder *pbi, size_t size,

@@ -17,10 +17,10 @@
 #include <stdlib.h>
 
 #include "config/aom_config.h"
+#include "config/aom_version.h"
 
 #include "aom/aom_integer.h"
 #include "aom/internal/aom_codec_internal.h"
-#include "aom_version.h"
 
 #define SAVE_STATUS(ctx, var) (ctx ? (ctx->err = var) : var)
 
@@ -149,6 +149,7 @@ const char *aom_obu_type_to_string(OBU_TYPE type) {
     case OBU_FRAME: return "OBU_FRAME";
     case OBU_TILE_GROUP: return "OBU_TILE_GROUP";
     case OBU_METADATA: return "OBU_METADATA";
+    case OBU_TILE_LIST: return "OBU_TILE_LIST";
     case OBU_PADDING: return "OBU_PADDING";
     default: break;
   }

@@ -374,6 +374,11 @@ typedef struct SPEED_FEATURES {
   // 1-2: progressively increasing aggressiveness of pruning
   int model_based_prune_tx_search_level;
 
+  // Model based breakout after interpolation filter search
+  // 0: no breakout
+  // 1: use model based rd breakout
+  int model_based_post_interp_filter_breakout;
+
   // Used if partition_search_type = FIXED_SIZE_PARTITION
   BLOCK_SIZE always_this_block_size;
 
@@ -553,6 +558,10 @@ typedef struct SPEED_FEATURES {
 
   // Whether to compute distortion in the image domain (slower but
   // more accurate), or in the transform domain (faster but less acurate).
+  // 0: use image domain
+  // 1: use transform domain in tx_type search, and use image domain for
+  // RD_STATS
+  // 2: use transform domain
   int use_transform_domain_distortion;
 
   GM_SEARCH_TYPE gm_search_type;
@@ -560,6 +569,11 @@ typedef struct SPEED_FEATURES {
   // Do limited interpolation filter search for dual filters, since best choice
   // usually includes EIGHTTAP_REGULAR.
   int use_fast_interpolation_filter_search;
+
+  // Save results of interpolation_filter_search for a block
+  // Check mv and ref_frames before search, if they are same with previous
+  // saved results, it can be skipped.
+  int skip_repeat_interpolation_filter_search;
 
   // Use a hash table to store previously computed optimized qcoeffs from
   // expensive calls to optimize_txb.
@@ -596,6 +610,9 @@ typedef struct SPEED_FEATURES {
   // Takes values 0 - 10, 0 indicating no penalty and each additional level
   // adding a penalty of 1%
   int dual_sgr_penalty_level;
+
+  // Dynamically estimate final rd from prediction error and mode cost
+  int inter_mode_rd_model_estimation;
 } SPEED_FEATURES;
 
 struct AV1_COMP;

@@ -336,11 +336,18 @@ static void decode_mbmi_block(AV1Decoder *const pbi, MACROBLOCKD *const xd,
   aom_merge_corrupted_flag(&xd->corrupted, reader_corrupted_flag);
 }
 
+typedef struct PadBlock {
+  int x0;
+  int x1;
+  int y0;
+  int y1;
+} PadBlock;
+
 static INLINE void dec_calc_subpel_params(
     MACROBLOCKD *xd, const struct scale_factors *const sf, const MV mv,
     int plane, const int pre_x, const int pre_y, int x, int y,
-    struct buf_2d *const pre_buf, uint8_t **pre, SubpelParams *subpel_params,
-    int bw, int bh) {
+    struct buf_2d *const pre_buf, SubpelParams *subpel_params, int bw, int bh,
+    PadBlock *block) {
   struct macroblockd_plane *const pd = &xd->plane[plane];
   const int is_scaled = av1_is_scaled(sf);
   if (is_scaled) {
@@ -363,20 +370,40 @@ static INLINE void dec_calc_subpel_params(
     pos_y = clamp(pos_y, top, bottom);
     pos_x = clamp(pos_x, left, right);
 
-    *pre = pre_buf->buf0 + (pos_y >> SCALE_SUBPEL_BITS) * pre_buf->stride +
-           (pos_x >> SCALE_SUBPEL_BITS);
     subpel_params->subpel_x = pos_x & SCALE_SUBPEL_MASK;
     subpel_params->subpel_y = pos_y & SCALE_SUBPEL_MASK;
     subpel_params->xs = sf->x_step_q4;
     subpel_params->ys = sf->y_step_q4;
+
+    // Get reference block top left coordinate.
+    block->x0 = pos_x >> SCALE_SUBPEL_BITS;
+    block->y0 = pos_y >> SCALE_SUBPEL_BITS;
+
+    // Get reference block bottom right coordinate.
+    block->x1 =
+        ((pos_x + (bw - 1) * subpel_params->xs) >> SCALE_SUBPEL_BITS) + 1;
+    block->y1 =
+        ((pos_y + (bh - 1) * subpel_params->ys) >> SCALE_SUBPEL_BITS) + 1;
   } else {
+    // Get block position in current frame.
+    int pos_x = (pre_x + x) << SUBPEL_BITS;
+    int pos_y = (pre_y + y) << SUBPEL_BITS;
+
     const MV mv_q4 = clamp_mv_to_umv_border_sb(
         xd, &mv, bw, bh, pd->subsampling_x, pd->subsampling_y);
     subpel_params->xs = subpel_params->ys = SCALE_SUBPEL_SHIFTS;
     subpel_params->subpel_x = (mv_q4.col & SUBPEL_MASK) << SCALE_EXTRA_BITS;
     subpel_params->subpel_y = (mv_q4.row & SUBPEL_MASK) << SCALE_EXTRA_BITS;
-    *pre = pre_buf->buf + (y + (mv_q4.row >> SUBPEL_BITS)) * pre_buf->stride +
-           (x + (mv_q4.col >> SUBPEL_BITS));
+
+    // Get reference block top left coordinate.
+    pos_x += mv_q4.col;
+    pos_y += mv_q4.row;
+    block->x0 = pos_x >> SUBPEL_BITS;
+    block->y0 = pos_y >> SUBPEL_BITS;
+
+    // Get reference block bottom right coordinate.
+    block->x1 = (pos_x >> SUBPEL_BITS) + (bw - 1) + 1;
+    block->y1 = (pos_y >> SUBPEL_BITS) + (bh - 1) + 1;
   }
 }
 
@@ -438,6 +465,7 @@ static INLINE void dec_build_inter_predictors(const AV1_COMMON *cm,
     const struct buf_2d orig_pred_buf[2] = { pd->pre[0], pd->pre[1] };
 
     int row = row_start;
+    int src_stride;
     for (int y = 0; y < b8_h; y += b4_h) {
       int col = col_start;
       for (int x = 0; x < b8_w; x += b4_w) {
@@ -474,13 +502,15 @@ static INLINE void dec_build_inter_predictors(const AV1_COMMON *cm,
 
         uint8_t *pre;
         SubpelParams subpel_params;
+        PadBlock block;
         WarpTypesAllowed warp_types;
         warp_types.global_warp_allowed = is_global[ref];
         warp_types.local_warp_allowed = this_mbmi->motion_mode == WARPED_CAUSAL;
 
         dec_calc_subpel_params(xd, sf, mv, plane, pre_x, pre_y, x, y, pre_buf,
-                               &pre, &subpel_params, bw, bh);
-
+                               &subpel_params, bw, bh, &block);
+        pre = pre_buf->buf0 + block.y0 * pre_buf->stride + block.x0;
+        src_stride = pre_buf->stride;
         conv_params.ref = ref;
         conv_params.do_average = ref;
         if (is_masked_compound_type(mi->interinter_compound_type)) {
@@ -489,8 +519,8 @@ static INLINE void dec_build_inter_predictors(const AV1_COMMON *cm,
         }
 
         av1_make_inter_predictor(
-            pre, pre_buf->stride, dst, dst_buf->stride, &subpel_params, sf,
-            b4_w, b4_h, &conv_params, this_mbmi->interp_filters, &warp_types,
+            pre, src_stride, dst, dst_buf->stride, &subpel_params, sf, b4_w,
+            b4_h, &conv_params, this_mbmi->interp_filters, &warp_types,
             (mi_x >> pd->subsampling_x) + x, (mi_y >> pd->subsampling_y) + y,
             plane, ref, mi, build_for_obmc, xd, cm->allow_warped_motion);
 
@@ -509,14 +539,18 @@ static INLINE void dec_build_inter_predictors(const AV1_COMMON *cm,
     uint8_t *pre[2];
     SubpelParams subpel_params[2];
     DECLARE_ALIGNED(32, uint16_t, tmp_dst[MAX_SB_SIZE * MAX_SB_SIZE]);
+    int src_stride[2];
     for (ref = 0; ref < 1 + is_compound; ++ref) {
       const struct scale_factors *const sf =
           is_intrabc ? &cm->sf_identity : &xd->block_refs[ref]->sf;
       struct buf_2d *const pre_buf = is_intrabc ? dst_buf : &pd->pre[ref];
       const MV mv = mi->mv[ref].as_mv;
+      PadBlock block;
 
       dec_calc_subpel_params(xd, sf, mv, plane, pre_x, pre_y, 0, 0, pre_buf,
-                             &pre[ref], &subpel_params[ref], bw, bh);
+                             &subpel_params[ref], bw, bh, &block);
+      pre[ref] = pre_buf->buf0 + block.y0 * pre_buf->stride + block.x0;
+      src_stride[ref] = pre_buf->stride;
     }
 
     ConvolveParams conv_params = get_conv_params_no_round(
@@ -528,7 +562,6 @@ static INLINE void dec_build_inter_predictors(const AV1_COMMON *cm,
     for (ref = 0; ref < 1 + is_compound; ++ref) {
       const struct scale_factors *const sf =
           is_intrabc ? &cm->sf_identity : &xd->block_refs[ref]->sf;
-      struct buf_2d *const pre_buf = is_intrabc ? dst_buf : &pd->pre[ref];
       WarpTypesAllowed warp_types;
       warp_types.global_warp_allowed = is_global[ref];
       warp_types.local_warp_allowed = mi->motion_mode == WARPED_CAUSAL;
@@ -541,13 +574,13 @@ static INLINE void dec_build_inter_predictors(const AV1_COMMON *cm,
 
       if (ref && is_masked_compound_type(mi->interinter_compound_type))
         av1_make_masked_inter_predictor(
-            pre[ref], pre_buf->stride, dst, dst_buf->stride,
+            pre[ref], src_stride[ref], dst, dst_buf->stride,
             &subpel_params[ref], sf, bw, bh, &conv_params, mi->interp_filters,
             plane, &warp_types, mi_x >> pd->subsampling_x,
             mi_y >> pd->subsampling_y, ref, xd, cm->allow_warped_motion);
       else
         av1_make_inter_predictor(
-            pre[ref], pre_buf->stride, dst, dst_buf->stride,
+            pre[ref], src_stride[ref], dst, dst_buf->stride,
             &subpel_params[ref], sf, bw, bh, &conv_params, mi->interp_filters,
             &warp_types, mi_x >> pd->subsampling_x, mi_y >> pd->subsampling_y,
             plane, ref, mi, build_for_obmc, xd, cm->allow_warped_motion);
@@ -1327,6 +1360,7 @@ static void setup_segmentation(AV1_COMMON *const cm,
         av1_set_segdata(seg, i, j, data);
       }
     }
+    calculate_segdata(seg);
   } else if (cm->prev_frame) {
     segfeatures_copy(seg, &cm->prev_frame->seg);
   }
@@ -2043,7 +2077,8 @@ static size_t mem_get_varsize(const uint8_t *src, int sz) {
 
 #if EXT_TILE_DEBUG
 // Reads the next tile returning its size and adjusting '*data' accordingly
-// based on 'is_last'.
+// based on 'is_last'. On return, '*data' is updated to point to the end of the
+// raw tile buffer in the bit stream.
 static void get_ls_tile_buffer(
     const uint8_t *const data_end, struct aom_internal_error_info *error_info,
     const uint8_t **data, TileBufferDec (*const tile_buffers)[MAX_TILE_COLS],
@@ -2087,23 +2122,24 @@ static void get_ls_tile_buffer(
   }
 
   *data += size;
-
-  tile_buffers[row][col].raw_data_end = *data;
 }
 
-static void get_ls_tile_buffers(
+// Returns the end of the last tile buffer
+// (tile_buffers[cm->tile_rows - 1][cm->tile_cols - 1]).
+static const uint8_t *get_ls_tile_buffers(
     AV1Decoder *pbi, const uint8_t *data, const uint8_t *data_end,
     TileBufferDec (*const tile_buffers)[MAX_TILE_COLS]) {
   AV1_COMMON *const cm = &pbi->common;
   const int tile_cols = cm->tile_cols;
   const int tile_rows = cm->tile_rows;
   const int have_tiles = tile_cols * tile_rows > 1;
+  const uint8_t *raw_data_end;  // The end of the last tile buffer
 
   if (!have_tiles) {
     const size_t tile_size = data_end - data;
     tile_buffers[0][0].data = data;
     tile_buffers[0][0].size = tile_size;
-    tile_buffers[0][0].raw_data_end = NULL;
+    raw_data_end = NULL;
   } else {
     // We locate only the tile buffers that are required, which are the ones
     // specified by pbi->dec_tile_col and pbi->dec_tile_row. Also, we always
@@ -2155,8 +2191,6 @@ static void get_ls_tile_buffers(
 
       // Get the whole of the last column, otherwise stop at the required tile.
       for (int r = 0; r < (is_last ? tile_rows : tile_rows_end); ++r) {
-        tile_buffers[r][c].col = c;
-
         get_ls_tile_buffer(tile_col_data_end[c], &pbi->common.error, &data,
                            tile_buffers, tile_size_bytes, c, r, tile_copy_mode);
       }
@@ -2164,20 +2198,30 @@ static void get_ls_tile_buffers(
 
     // If we have not read the last column, then read it to get the last tile.
     if (tile_cols_end != tile_cols) {
-      int c = tile_cols - 1;
+      const int c = tile_cols - 1;
 
       data = tile_col_data_end[c - 1];
 
       for (int r = 0; r < tile_rows; ++r) {
-        tile_buffers[r][c].col = c;
-
         get_ls_tile_buffer(tile_col_data_end[c], &pbi->common.error, &data,
                            tile_buffers, tile_size_bytes, c, r, tile_copy_mode);
       }
     }
+    raw_data_end = data;
   }
+  return raw_data_end;
 }
 #endif  // EXT_TILE_DEBUG
+
+static const uint8_t *get_ls_single_tile_buffer(
+    AV1Decoder *pbi, const uint8_t *data,
+    TileBufferDec (*const tile_buffers)[MAX_TILE_COLS]) {
+  assert(pbi->dec_tile_row >= 0 && pbi->dec_tile_col >= 0);
+  tile_buffers[pbi->dec_tile_row][pbi->dec_tile_col].data = data;
+  tile_buffers[pbi->dec_tile_row][pbi->dec_tile_col].size =
+      (size_t)pbi->coded_tile_data_size;
+  return data + pbi->coded_tile_data_size;
+}
 
 // Reads the next tile returning its size and adjusting '*data' accordingly
 // based on 'is_last'.
@@ -2230,7 +2274,6 @@ static void get_tile_buffers(AV1Decoder *pbi, const uint8_t *data,
       if (data + hdr_offset >= data_end)
         aom_internal_error(&cm->error, AOM_CODEC_CORRUPT_FRAME,
                            "Data ended before all tiles were read.");
-      buf->col = c;
       first_tile_in_tg += tc == first_tile_in_tg ? pbi->tg_size : 0;
       data += hdr_offset;
       get_tile_buffer(data_end, pbi->tile_size_bytes, is_last,
@@ -2320,6 +2363,7 @@ static const uint8_t *decode_tiles(AV1Decoder *pbi, const uint8_t *data,
   int inv_row_order;
   int tile_row, tile_col;
   uint8_t allow_update_cdf;
+  const uint8_t *raw_data_end = NULL;
 
   if (cm->large_scale_tile) {
     tile_rows_start = single_row ? dec_tile_row : 0;
@@ -2353,8 +2397,10 @@ static const uint8_t *decode_tiles(AV1Decoder *pbi, const uint8_t *data,
   assert(tile_cols <= MAX_TILE_COLS);
 
 #if EXT_TILE_DEBUG
-  if (cm->large_scale_tile)
-    get_ls_tile_buffers(pbi, data, data_end, tile_buffers);
+  if (cm->large_scale_tile && !pbi->ext_tile_debug)
+    raw_data_end = get_ls_single_tile_buffer(pbi, data, tile_buffers);
+  else if (cm->large_scale_tile && pbi->ext_tile_debug)
+    raw_data_end = get_ls_tile_buffers(pbi, data, data_end, tile_buffers);
   else
 #endif  // EXT_TILE_DEBUG
     get_tile_buffers(pbi, data, data_end, tile_buffers, startTile, endTile);
@@ -2424,7 +2470,7 @@ static const uint8_t *decode_tiles(AV1Decoder *pbi, const uint8_t *data,
       return aom_reader_find_end(&pbi->tile_data->bit_reader);
     }
     // Return the end of the last tile buffer
-    return tile_buffers[tile_rows - 1][tile_cols - 1].raw_data_end;
+    return raw_data_end;
   }
   TileDataDec *const tile_data = pbi->tile_data + endTile;
 
@@ -2515,6 +2561,7 @@ static const uint8_t *decode_tiles_mt(AV1Decoder *pbi, const uint8_t *data,
   int tile_count_tg;
   int num_workers;
   int worker_idx;
+  const uint8_t *raw_data_end = NULL;
 
   if (cm->large_scale_tile) {
     tile_rows_start = single_row ? dec_tile_row : 0;
@@ -2579,7 +2626,7 @@ static const uint8_t *decode_tiles_mt(AV1Decoder *pbi, const uint8_t *data,
     // get tile size in tile group
 #if EXT_TILE_DEBUG
   if (cm->large_scale_tile)
-    get_ls_tile_buffers(pbi, data, data_end, tile_buffers);
+    raw_data_end = get_ls_tile_buffers(pbi, data, data_end, tile_buffers);
   else
 #endif  // EXT_TILE_DEBUG
     get_tile_buffers(pbi, data, data_end, tile_buffers, startTile, endTile);
@@ -2650,7 +2697,7 @@ static const uint8_t *decode_tiles_mt(AV1Decoder *pbi, const uint8_t *data,
       return aom_reader_find_end(&pbi->tile_data->bit_reader);
     }
     // Return the end of the last tile buffer
-    return tile_buffers[tile_rows - 1][tile_cols - 1].raw_data_end;
+    return raw_data_end;
   }
   TileDataDec *const tile_data = pbi->tile_data + endTile;
 
@@ -2908,48 +2955,29 @@ void av1_read_color_config(AV1_COMMON *cm, struct aom_read_bit_buffer *rb,
 
 void av1_read_timing_info_header(AV1_COMMON *cm,
                                  struct aom_read_bit_buffer *rb) {
-#if !CONFIG_BUFFER_MODEL
-  cm->timing_info_present = aom_rb_read_bit(rb);  // timing info present flag
-
-  if (cm->timing_info_present) {
-#endif
-#if CONFIG_BUFFER_MODEL
-    cm->timing_info.num_units_in_display_tick = aom_rb_read_unsigned_literal(
-        rb, 32);  // Number of units in a display tick
-    cm->timing_info.time_scale =
-        aom_rb_read_unsigned_literal(rb, 32);  // Time scale
-    if (cm->timing_info.num_units_in_display_tick == 0 ||
-        cm->timing_info.time_scale == 0) {
+  cm->timing_info.num_units_in_display_tick = aom_rb_read_unsigned_literal(
+      rb, 32);  // Number of units in a display tick
+  cm->timing_info.time_scale =
+      aom_rb_read_unsigned_literal(rb, 32);  // Time scale
+  if (cm->timing_info.num_units_in_display_tick == 0 ||
+      cm->timing_info.time_scale == 0) {
+    aom_internal_error(
+        &cm->error, AOM_CODEC_UNSUP_BITSTREAM,
+        "num_units_in_display_tick and time_scale must be greater than 0.");
+  }
+  cm->timing_info.equal_picture_interval =
+      aom_rb_read_bit(rb);  // Equal picture interval bit
+  if (cm->timing_info.equal_picture_interval) {
+    cm->timing_info.num_ticks_per_picture =
+        aom_rb_read_uvlc(rb) + 1;  // ticks per picture
+    if (cm->timing_info.num_ticks_per_picture == 0) {
       aom_internal_error(
           &cm->error, AOM_CODEC_UNSUP_BITSTREAM,
-          "num_units_in_display_tick and time_scale must be greater than 0.");
+          "num_ticks_per_picture_minus_1 cannot be (1 << 32) − 1.");
     }
-    cm->timing_info.equal_picture_interval =
-        aom_rb_read_bit(rb);  // Equal picture interval bit
-    if (cm->timing_info.equal_picture_interval) {
-      cm->timing_info.num_ticks_per_picture =
-          aom_rb_read_uvlc(rb) + 1;  // ticks per picture
-      if (cm->timing_info.num_ticks_per_picture == 0) {
-        aom_internal_error(
-            &cm->error, AOM_CODEC_UNSUP_BITSTREAM,
-            "num_ticks_per_picture_minus_1 cannot be (1 << 32) − 1.");
-      }
-#else
-  cm->num_units_in_tick =
-      aom_rb_read_unsigned_literal(rb, 32);  // Number of units in tick
-  cm->time_scale = aom_rb_read_unsigned_literal(rb, 32);  // Time scale
-  cm->equal_picture_interval =
-      aom_rb_read_bit(rb);  // Equal picture interval bit
-  if (cm->equal_picture_interval) {
-    cm->num_ticks_per_picture = aom_rb_read_uvlc(rb) + 1;  // ticks per picture
-#endif
-    }
-#if !CONFIG_BUFFER_MODEL
   }
-#endif
 }
 
-#if CONFIG_BUFFER_MODEL
 void av1_read_decoder_model_info(AV1_COMMON *cm,
                                  struct aom_read_bit_buffer *rb) {
   cm->buffer_model.bitrate_scale = aom_rb_read_literal(rb, 4);
@@ -2992,7 +3020,6 @@ static void av1_read_tu_pts_info(AV1_COMMON *const cm,
   cm->tu_presentation_delay =
       aom_rb_read_literal(rb, cm->buffer_model.frame_presentation_delay_length);
 }
-#endif
 
 void read_sequence_header(AV1_COMMON *cm, struct aom_read_bit_buffer *rb) {
   // rb->error_handler may be triggered during aom_rb_read_bit(), raising
@@ -3298,12 +3325,10 @@ static int read_uncompressed_header(AV1Decoder *pbi,
       // Show an existing frame directly.
       const int existing_frame_idx = aom_rb_read_literal(rb, 3);
       const int frame_to_show = cm->ref_frame_map[existing_frame_idx];
-#if CONFIG_BUFFER_MODEL
-      if (cm->decoder_model_info_present_flag &&
+      if (cm->seq_params.decoder_model_info_present_flag &&
           cm->timing_info.equal_picture_interval == 0) {
         av1_read_tu_pts_info(cm, rb);
       }
-#endif
       if (cm->seq_params.frame_id_numbers_present_flag) {
         int frame_id_length = cm->seq_params.frame_id_length;
         int display_frame_id = aom_rb_read_literal(rb, frame_id_length);
@@ -3353,15 +3378,11 @@ static int read_uncompressed_header(AV1Decoder *pbi,
                          "Still pictures must be coded as shown keyframes");
     }
     cm->showable_frame = 0;
-#if CONFIG_BUFFER_MODEL
     if (cm->show_frame) {
-      if (cm->decoder_model_info_present_flag &&
+      if (cm->seq_params.decoder_model_info_present_flag &&
           cm->timing_info.equal_picture_interval == 0)
         av1_read_tu_pts_info(cm, rb);
     } else {
-#else
-    if (!cm->show_frame) {
-#endif
       // See if this frame can be used as show_existing_frame in future
       cm->showable_frame = aom_rb_read_bit(rb);
     }
@@ -3449,27 +3470,31 @@ static int read_uncompressed_header(AV1Decoder *pbi,
     }
   }
 
-#if CONFIG_BUFFER_MODEL
-  if (cm->decoder_model_info_present_flag) {
+  if (cm->seq_params.decoder_model_info_present_flag) {
     cm->buffer_removal_delay_present = aom_rb_read_bit(rb);
     if (cm->buffer_removal_delay_present) {
-      for (int op_num = 0; op_num < cm->operating_points_decoder_model_cnt;
-           op_num++) {
-        if ((((cm->op_params[op_num].decoder_model_operating_point_idc >>
-               cm->temporal_layer_id) &
-              0x1) &&
-             ((cm->op_params[op_num].decoder_model_operating_point_idc >>
-               (cm->spatial_layer_id + 8)) &
-              0x1)) ||
-            cm->op_params[op_num].decoder_model_operating_point_idc == 0) {
-          cm->op_frame_timing[op_num].buffer_removal_delay =
-              aom_rb_read_literal(rb,
-                                  cm->buffer_model.buffer_removal_delay_length);
+      for (int op_num = 0;
+           op_num < cm->seq_params.operating_points_cnt_minus_1 + 1; op_num++) {
+        if (cm->op_params[op_num].decoder_model_param_present_flag) {
+          if ((((cm->seq_params.operating_point_idc[op_num] >>
+                 cm->temporal_layer_id) &
+                0x1) &&
+               ((cm->seq_params.operating_point_idc[op_num] >>
+                 (cm->spatial_layer_id + 8)) &
+                0x1)) ||
+              cm->seq_params.operating_point_idc[op_num] == 0) {
+            cm->op_frame_timing[op_num].buffer_removal_delay =
+                aom_rb_read_literal(
+                    rb, cm->buffer_model.buffer_removal_delay_length);
+          } else {
+            cm->op_frame_timing[op_num].buffer_removal_delay = 0;
+          }
+        } else {
+          cm->op_frame_timing[op_num].buffer_removal_delay = 0;
         }
       }
     }
   }
-#endif
   if (cm->frame_type == KEY_FRAME) {
     if (!cm->show_frame)  // unshown keyframe (forward keyframe)
       pbi->refresh_frame_flags = aom_rb_read_literal(rb, REF_FRAMES);
@@ -3555,7 +3580,7 @@ static int read_uncompressed_header(AV1Decoder *pbi,
   if (cm->frame_type == KEY_FRAME) {
     setup_frame_size(cm, frame_size_override_flag, rb);
 
-    if (cm->allow_screen_content_tools && av1_superres_unscaled(cm))
+    if (cm->allow_screen_content_tools && !av1_superres_scaled(cm))
       cm->allow_intrabc = aom_rb_read_bit(rb);
     cm->allow_ref_frame_mvs = 0;
     cm->prev_frame = NULL;
@@ -3565,7 +3590,7 @@ static int read_uncompressed_header(AV1Decoder *pbi,
     if (cm->intra_only) {
       cm->cur_frame->film_grain_params_present = cm->film_grain_params_present;
       setup_frame_size(cm, frame_size_override_flag, rb);
-      if (cm->allow_screen_content_tools && av1_superres_unscaled(cm))
+      if (cm->allow_screen_content_tools && !av1_superres_scaled(cm))
         cm->allow_intrabc = aom_rb_read_bit(rb);
 
     } else if (pbi->need_resync != 1) { /* Skip if need resync */
@@ -3795,17 +3820,13 @@ static int read_uncompressed_header(AV1Decoder *pbi,
   cm->delta_lf_multi = 0;
   cm->delta_q_present_flag = cm->base_qindex > 0 ? aom_rb_read_bit(rb) : 0;
   if (cm->delta_q_present_flag) {
-    xd->prev_qindex = cm->base_qindex;
+    xd->current_qindex = cm->base_qindex;
     cm->delta_q_res = 1 << aom_rb_read_literal(rb, 2);
     if (!cm->allow_intrabc) cm->delta_lf_present_flag = aom_rb_read_bit(rb);
     if (cm->delta_lf_present_flag) {
-      xd->prev_delta_lf_from_base = 0;
       cm->delta_lf_res = 1 << aom_rb_read_literal(rb, 2);
       cm->delta_lf_multi = aom_rb_read_bit(rb);
-      const int frame_lf_count =
-          av1_num_planes(cm) > 1 ? FRAME_LF_COUNT : FRAME_LF_COUNT - 2;
-      for (int lf_id = 0; lf_id < frame_lf_count; ++lf_id)
-        xd->prev_delta_lf[lf_id] = 0;
+      av1_reset_loop_filter_delta(xd, av1_num_planes(cm));
     }
   }
 
@@ -3821,7 +3842,7 @@ static int read_uncompressed_header(AV1Decoder *pbi,
     xd->qindex[i] = qindex;
   }
   cm->coded_lossless = is_coded_lossless(cm, xd);
-  cm->all_lossless = cm->coded_lossless && av1_superres_unscaled(cm);
+  cm->all_lossless = cm->coded_lossless && !av1_superres_scaled(cm);
   setup_segmentation_dequant(cm);
   if (cm->coded_lossless) {
     cm->lf.filter_level[0] = 0;
@@ -3900,7 +3921,7 @@ void superres_post_decode(AV1Decoder *pbi) {
   AV1_COMMON *const cm = &pbi->common;
   BufferPool *const pool = cm->buffer_pool;
 
-  if (av1_superres_unscaled(cm)) return;
+  if (!av1_superres_scaled(cm)) return;
   assert(!cm->all_lossless);
 
   lock_buffer_pool(pool);
@@ -4006,7 +4027,7 @@ void av1_decode_tg_tiles_and_wrapup(AV1Decoder *pbi, const uint8_t *data,
 
   if (initialize_flag) setup_frame_info(pbi);
 
-  if (pbi->max_threads > 1 && cm->tile_rows == 1 && tile_count_tg > 1)
+  if (pbi->max_threads > 1 && tile_count_tg > 1 && !cm->large_scale_tile)
     *p_data_end = decode_tiles_mt(pbi, data, data_end, startTile, endTile);
   else
     *p_data_end = decode_tiles(pbi, data, data_end, startTile, endTile);
@@ -4019,7 +4040,7 @@ void av1_decode_tg_tiles_and_wrapup(AV1Decoder *pbi, const uint8_t *data,
     return;
   }
 
-  if (!cm->allow_intrabc) {
+  if (!cm->allow_intrabc && !cm->single_tile_decoding) {
     if (cm->lf.filter_level[0] || cm->lf.filter_level[1]) {
 #if LOOP_FILTER_BITMASK
       av1_loop_filter_frame(get_frame_new_buffer(cm), cm, &pbi->mb, 0,
@@ -4043,7 +4064,7 @@ void av1_decode_tg_tiles_and_wrapup(AV1Decoder *pbi, const uint8_t *data,
     const int do_cdef =
         !cm->skip_loop_filter && !cm->coded_lossless &&
         (cm->cdef_bits || cm->cdef_strengths[0] || cm->cdef_uv_strengths[0]);
-    const int do_superres = !av1_superres_unscaled(cm);
+    const int do_superres = av1_superres_scaled(cm);
     const int optimized_loop_restoration = !do_cdef && !do_superres;
 
     if (!optimized_loop_restoration) {
@@ -4056,15 +4077,32 @@ void av1_decode_tg_tiles_and_wrapup(AV1Decoder *pbi, const uint8_t *data,
 
       if (do_loop_restoration) {
         av1_loop_restoration_save_boundary_lines(&pbi->cur_buf->buf, cm, 1);
-        av1_loop_restoration_filter_frame((YV12_BUFFER_CONFIG *)xd->cur_buf, cm,
-                                          optimized_loop_restoration);
+        if (pbi->num_workers > 1) {
+          av1_loop_restoration_filter_frame_mt(
+              (YV12_BUFFER_CONFIG *)xd->cur_buf, cm, optimized_loop_restoration,
+              pbi->tile_workers, pbi->num_workers, &pbi->lr_row_sync,
+              &pbi->lr_ctxt);
+        } else {
+          av1_loop_restoration_filter_frame((YV12_BUFFER_CONFIG *)xd->cur_buf,
+                                            cm, optimized_loop_restoration,
+                                            &pbi->lr_ctxt);
+        }
       }
     } else {
       // In no cdef and no superres case. Provide an optimized version of
       // loop_restoration_filter.
-      if (do_loop_restoration)
-        av1_loop_restoration_filter_frame((YV12_BUFFER_CONFIG *)xd->cur_buf, cm,
-                                          optimized_loop_restoration);
+      if (do_loop_restoration) {
+        if (pbi->num_workers > 1) {
+          av1_loop_restoration_filter_frame_mt(
+              (YV12_BUFFER_CONFIG *)xd->cur_buf, cm, optimized_loop_restoration,
+              pbi->tile_workers, pbi->num_workers, &pbi->lr_row_sync,
+              &pbi->lr_ctxt);
+        } else {
+          av1_loop_restoration_filter_frame((YV12_BUFFER_CONFIG *)xd->cur_buf,
+                                            cm, optimized_loop_restoration,
+                                            &pbi->lr_ctxt);
+        }
+      }
     }
   }
 

@@ -917,14 +917,15 @@ static void update_stats(const AV1_COMMON *const cm, TileDataEnc *tile_data,
       (bsize != cm->seq_params.sb_size || !mbmi->skip) &&
       super_block_upper_left) {
 #if CONFIG_ENTROPY_STATS
-    const int dq = (mbmi->current_q_index - xd->prev_qindex) / cm->delta_q_res;
+    const int dq =
+        (mbmi->current_qindex - xd->current_qindex) / cm->delta_q_res;
     const int absdq = abs(dq);
     for (int i = 0; i < AOMMIN(absdq, DELTA_Q_SMALL); ++i) {
       td->counts->delta_q[i][1]++;
     }
     if (absdq < DELTA_Q_SMALL) td->counts->delta_q[absdq][0]++;
 #endif
-    xd->prev_qindex = mbmi->current_q_index;
+    xd->current_qindex = mbmi->current_qindex;
     if (cm->delta_lf_present_flag) {
       if (cm->delta_lf_multi) {
         const int frame_lf_count =
@@ -932,8 +933,7 @@ static void update_stats(const AV1_COMMON *const cm, TileDataEnc *tile_data,
         for (int lf_id = 0; lf_id < frame_lf_count; ++lf_id) {
 #if CONFIG_ENTROPY_STATS
           const int delta_lf =
-              (mbmi->curr_delta_lf[lf_id] - xd->prev_delta_lf[lf_id]) /
-              cm->delta_lf_res;
+              (mbmi->delta_lf[lf_id] - xd->delta_lf[lf_id]) / cm->delta_lf_res;
           const int abs_delta_lf = abs(delta_lf);
           for (int i = 0; i < AOMMIN(abs_delta_lf, DELTA_LF_SMALL); ++i) {
             td->counts->delta_lf_multi[lf_id][i][1]++;
@@ -941,12 +941,12 @@ static void update_stats(const AV1_COMMON *const cm, TileDataEnc *tile_data,
           if (abs_delta_lf < DELTA_LF_SMALL)
             td->counts->delta_lf_multi[lf_id][abs_delta_lf][0]++;
 #endif
-          xd->prev_delta_lf[lf_id] = mbmi->curr_delta_lf[lf_id];
+          xd->delta_lf[lf_id] = mbmi->delta_lf[lf_id];
         }
       } else {
 #if CONFIG_ENTROPY_STATS
         const int delta_lf =
-            (mbmi->current_delta_lf_from_base - xd->prev_delta_lf_from_base) /
+            (mbmi->delta_lf_from_base - xd->delta_lf_from_base) /
             cm->delta_lf_res;
         const int abs_delta_lf = abs(delta_lf);
         for (int i = 0; i < AOMMIN(abs_delta_lf, DELTA_LF_SMALL); ++i) {
@@ -955,7 +955,7 @@ static void update_stats(const AV1_COMMON *const cm, TileDataEnc *tile_data,
         if (abs_delta_lf < DELTA_LF_SMALL)
           td->counts->delta_lf[abs_delta_lf][0]++;
 #endif
-        xd->prev_delta_lf_from_base = mbmi->current_delta_lf_from_base;
+        xd->delta_lf_from_base = mbmi->delta_lf_from_base;
       }
     }
   }
@@ -1461,8 +1461,8 @@ static void encode_b(const AV1_COMP *const cpi, TileDataEnc *tile_data,
                                      ? FRAME_LF_COUNT
                                      : FRAME_LF_COUNT - 2;
       for (int lf_id = 0; lf_id < frame_lf_count; ++lf_id)
-        mbmi->curr_delta_lf[lf_id] = xd->prev_delta_lf[lf_id];
-      mbmi->current_delta_lf_from_base = xd->prev_delta_lf_from_base;
+        mbmi->delta_lf[lf_id] = xd->delta_lf[lf_id];
+      mbmi->delta_lf_from_base = xd->delta_lf_from_base;
     }
     if (has_second_ref(mbmi)) {
       if (mbmi->compound_idx == 0 ||
@@ -2437,6 +2437,9 @@ static void rd_pick_sqr_partition(const AV1_COMP *const cpi, ThreadData *td,
   (void)*tp_orig;
   (void)split_rd;
 
+  av1_zero(pc_tree->pc_tree_stats);
+  pc_tree->pc_tree_stats.valid = 1;
+
   // Override partition costs at the edges of the frame in the same
   // way as in read_partition (see decodeframe.c)
   if (!(has_rows && has_cols)) {
@@ -2493,6 +2496,10 @@ static void rd_pick_sqr_partition(const AV1_COMP *const cpi, ThreadData *td,
 
     rd_pick_sb_modes(cpi, tile_data, x, mi_row, mi_col, &this_rdc,
                      PARTITION_NONE, bsize, ctx_none, best_rdc.rdcost);
+
+    pc_tree->pc_tree_stats.rdcost = ctx_none->rdcost;
+    pc_tree->pc_tree_stats.skip = ctx_none->skip;
+
     if (none_rd) *none_rd = this_rdc.rdcost;
     if (this_rdc.rate != INT_MAX) {
       if (bsize_at_least_8x8) {
@@ -2573,6 +2580,10 @@ static void rd_pick_sqr_partition(const AV1_COMP *const cpi, ThreadData *td,
                             temp_best_rdcost - sum_rdc.rdcost,
                             pc_tree->split[idx], p_split_rd);
 
+      pc_tree->pc_tree_stats.sub_block_rdcost[idx] = this_rdc.rdcost;
+      pc_tree->pc_tree_stats.sub_block_skip[idx] =
+          pc_tree->split[idx]->none.skip;
+
       if (this_rdc.rate == INT_MAX) {
         sum_rdc.rdcost = INT64_MAX;
         break;
@@ -2625,6 +2636,14 @@ static void rd_pick_sqr_partition(const AV1_COMP *const cpi, ThreadData *td,
     restore_context(x, &x_ctx, mi_row, mi_col, bsize, num_planes);
   }  // if (do_split)
 
+  pc_tree->pc_tree_stats.split = pc_tree->partitioning == PARTITION_SPLIT;
+  if (do_square_split) {
+    for (int i = 0; i < 4; ++i) {
+      pc_tree->pc_tree_stats.sub_block_split[i] =
+          pc_tree->split[i]->partitioning == PARTITION_SPLIT;
+    }
+  }
+
   // TODO(jbb): This code added so that we avoid static analysis
   // warning related to the fact that best_rd isn't used after this
   // point.  This code should be refactored so that the duplicate
@@ -2657,6 +2676,145 @@ static void rd_pick_sqr_partition(const AV1_COMP *const cpi, ThreadData *td,
     assert(tp_orig == *tp);
   }
 }
+
+#define FEATURE_SIZE 19
+static const float two_pass_split_partition_weights_128[FEATURE_SIZE + 1] = {
+  2.683936f, -0.193620f, -4.106470f, -0.141320f, -0.282289f,
+  0.125296f, -1.134961f, 0.862757f,  -0.418799f, -0.637666f,
+  0.016232f, 0.345013f,  0.018823f,  -0.393394f, -1.130700f,
+  0.695357f, 0.112569f,  -0.341975f, -0.513882f, 5.7488966f,
+};
+
+static const float two_pass_split_partition_weights_64[FEATURE_SIZE + 1] = {
+  2.990993f,  0.423273f,  -0.926544f, 0.454646f,  -0.292698f,
+  -1.311632f, -0.284432f, 0.717141f,  -0.419257f, -0.574760f,
+  -0.674444f, 0.669047f,  -0.374255f, 0.380624f,  -0.804036f,
+  0.264021f,  0.004163f,  1.896802f,  0.924287f,  0.13490619f,
+};
+
+static const float two_pass_split_partition_weights_32[FEATURE_SIZE + 1] = {
+  2.795181f,  -0.136943f, -0.924842f, 0.405330f,  -0.463505f,
+  -0.584076f, -0.831472f, 0.382985f,  -0.597544f, -0.138915f,
+  -1.354350f, 0.466035f,  -0.553961f, 0.213202f,  -1.166429f,
+  0.010776f,  -0.096236f, 2.335084f,  1.699857f,  -0.58178353f,
+};
+
+static const float two_pass_split_partition_weights_16[FEATURE_SIZE + 1] = {
+  1.987888f,  -0.431100f, -1.687703f, 0.262602f,  -0.425298f,
+  -0.463870f, -1.493457f, 0.470917f,  -0.528457f, -0.087700f,
+  -1.815092f, 0.152883f,  -0.337908f, 0.093679f,  -1.548267f,
+  -0.042387f, -0.000861f, 2.556746f,  1.619192f,  0.03643292f,
+};
+
+static const float two_pass_split_partition_weights_8[FEATURE_SIZE + 1] = {
+  2.188344f,  -0.817528f, -2.119219f, 0.000000f,  -0.348167f,
+  -0.658074f, -1.960362f, 0.000000f,  -0.403080f, 0.282699f,
+  -2.061088f, 0.000000f,  -0.431919f, -0.127960f, -1.099550f,
+  0.000000f,  0.121622f,  2.017455f,  2.058228f,  -0.15475988f,
+};
+
+static const float two_pass_none_partition_weights_128[FEATURE_SIZE + 1] = {
+  -1.006689f, 0.777908f,  4.461072f,  -0.395782f, -0.014610f,
+  -0.853863f, 0.729997f,  -0.420477f, 0.282429f,  -1.194595f,
+  3.181220f,  -0.511416f, 0.117084f,  -1.149348f, 1.507990f,
+  -0.477212f, 0.202963f,  -1.469581f, 0.624461f,  -0.89081228f,
+};
+
+static const float two_pass_none_partition_weights_64[FEATURE_SIZE + 1] = {
+  -1.241117f, 0.844878f,  5.638803f,  -0.489780f, -0.108796f,
+  -4.576821f, 1.540624f,  -0.477519f, 0.227791f,  -1.443968f,
+  1.586911f,  -0.505125f, 0.140764f,  -0.464194f, 1.466658f,
+  -0.641166f, 0.195412f,  1.427905f,  2.080007f,  -1.98272777f,
+};
+
+static const float two_pass_none_partition_weights_32[FEATURE_SIZE + 1] = {
+  -2.130825f, 0.476023f,  5.907343f,  -0.516002f, -0.097471f,
+  -2.662754f, 0.614858f,  -0.576728f, 0.085261f,  -0.031901f,
+  0.727842f,  -0.600034f, 0.079326f,  0.324328f,  0.504502f,
+  -0.547105f, -0.037670f, 0.304995f,  0.369018f,  -2.66299987f,
+};
+
+static const float two_pass_none_partition_weights_16[FEATURE_SIZE + 1] = {
+  -1.626410f, 0.872047f,  5.414965f,  -0.554781f, -0.084514f,
+  -3.020550f, 0.467632f,  -0.382280f, 0.199568f,  0.426220f,
+  0.829426f,  -0.467100f, 0.153098f,  0.662994f,  0.327545f,
+  -0.560106f, -0.141610f, 0.403372f,  0.523991f,  -3.02891231f,
+};
+
+static const float two_pass_none_partition_weights_8[FEATURE_SIZE + 1] = {
+  -1.463349f, 0.375376f,  4.751430f, 0.000000f, -0.184451f,
+  -1.655447f, 0.443214f,  0.000000f, 0.127961f, 0.152435f,
+  0.083288f,  0.000000f,  0.143105f, 0.438012f, 0.073238f,
+  0.000000f,  -0.278137f, 0.186134f, 0.073737f, -1.6494962f,
+};
+
+// split_score indicates confidence of picking split partition;
+// none_score indicates confidence of picking none partition;
+static int ml_prune_2pass_split_partition(const PC_TREE_STATS *pc_tree_stats,
+                                          BLOCK_SIZE bsize, int *split_score,
+                                          int *none_score) {
+  if (!pc_tree_stats->valid) return 0;
+  const float *split_weights = NULL;
+  const float *none_weights = NULL;
+  switch (bsize) {
+    case BLOCK_4X4: break;
+    case BLOCK_8X8:
+      split_weights = two_pass_split_partition_weights_8;
+      none_weights = two_pass_none_partition_weights_8;
+      break;
+    case BLOCK_16X16:
+      split_weights = two_pass_split_partition_weights_16;
+      none_weights = two_pass_none_partition_weights_16;
+      break;
+    case BLOCK_32X32:
+      split_weights = two_pass_split_partition_weights_32;
+      none_weights = two_pass_none_partition_weights_32;
+      break;
+    case BLOCK_64X64:
+      split_weights = two_pass_split_partition_weights_64;
+      none_weights = two_pass_none_partition_weights_64;
+      break;
+    case BLOCK_128X128:
+      split_weights = two_pass_split_partition_weights_128;
+      none_weights = two_pass_none_partition_weights_128;
+      break;
+    default: assert(0 && "Unexpected bsize.");
+  }
+  if (!split_weights || !none_weights) return 0;
+
+  float features[FEATURE_SIZE];
+  int feature_index = 0;
+  features[feature_index++] = (float)pc_tree_stats->split;
+  features[feature_index++] = (float)pc_tree_stats->skip;
+  const int rdcost = (int)AOMMIN(INT_MAX, pc_tree_stats->rdcost);
+  const int rd_valid = rdcost > 0 && rdcost < 1000000000;
+  features[feature_index++] = (float)rd_valid;
+  for (int i = 0; i < 4; ++i) {
+    features[feature_index++] = (float)pc_tree_stats->sub_block_split[i];
+    features[feature_index++] = (float)pc_tree_stats->sub_block_skip[i];
+    const int sub_rdcost =
+        (int)AOMMIN(INT_MAX, pc_tree_stats->sub_block_rdcost[i]);
+    const int sub_rd_valid = sub_rdcost > 0 && sub_rdcost < 1000000000;
+    features[feature_index++] = (float)sub_rd_valid;
+    // Ratio between the sub-block RD and the whole-block RD.
+    float rd_ratio = 1.0f;
+    if (rd_valid && sub_rd_valid && sub_rdcost < rdcost)
+      rd_ratio = (float)sub_rdcost / (float)rdcost;
+    features[feature_index++] = rd_ratio;
+  }
+  assert(feature_index == FEATURE_SIZE);
+
+  float score_1 = split_weights[FEATURE_SIZE];
+  float score_2 = none_weights[FEATURE_SIZE];
+  for (int i = 0; i < FEATURE_SIZE; ++i) {
+    score_1 += features[i] * split_weights[i];
+    score_2 += features[i] * none_weights[i];
+  }
+  *split_score = (int)(score_1 * 100);
+  *none_score = (int)(score_2 * 100);
+  return 1;
+}
+#undef FEATURE_SIZE
 
 // TODO(jingning,jimbankoski,rbultje): properly skip partition types that are
 // unlikely to be selected depending on previous rate-distortion optimization
@@ -2790,21 +2948,54 @@ static void rd_pick_partition(const AV1_COMP *const cpi, ThreadData *td,
     partition_vert_allowed &= !has_cols;
   }
 
-  if (x->use_cb_search_range && cpi->sf.auto_min_max_partition_size == 0) {
-    if (pc_tree->cb_search_range == SPLIT_PLANE) {
-      partition_none_allowed = 0;
-      partition_horz_allowed = 0;
-      partition_vert_allowed = 0;
+  if (bsize > BLOCK_4X4 && x->use_cb_search_range &&
+      cpi->sf.auto_min_max_partition_size == 0) {
+    int split_score = 0;
+    int none_score = 0;
+    const int score_valid = ml_prune_2pass_split_partition(
+        &pc_tree->pc_tree_stats, bsize, &split_score, &none_score);
+    if (score_valid) {
+      {
+        const int only_split_thresh = 300;
+        const int no_none_thresh = 250;
+        const int no_split_thresh = 0;
+        if (split_score > only_split_thresh) {
+          partition_none_allowed = 0;
+          partition_horz_allowed = 0;
+          partition_vert_allowed = 0;
+        } else if (split_score > no_none_thresh) {
+          partition_none_allowed = 0;
+        }
+        if (split_score < no_split_thresh) do_square_split = 0;
+      }
+      {
+        const int no_split_thresh = 120;
+        const int no_none_thresh = -120;
+        if (none_score > no_split_thresh && partition_none_allowed)
+          do_square_split = 0;
+        if (none_score < no_none_thresh) partition_none_allowed = 0;
+      }
+    } else {
+      if (pc_tree->cb_search_range == SPLIT_PLANE) {
+        partition_none_allowed = 0;
+        partition_horz_allowed = 0;
+        partition_vert_allowed = 0;
+      }
+      if (pc_tree->cb_search_range == SEARCH_SAME_PLANE) do_square_split = 0;
+      if (pc_tree->cb_search_range == NONE_PARTITION_PLANE) {
+        do_square_split = 0;
+        partition_horz_allowed = 0;
+        partition_vert_allowed = 0;
+      }
     }
 
-    if (pc_tree->cb_search_range == SEARCH_SAME_PLANE) {
-      do_square_split = 0;
-    }
-
-    if (pc_tree->cb_search_range == NONE_PARTITION_PLANE) {
-      do_square_split = 0;
-      partition_horz_allowed = 0;
-      partition_vert_allowed = 0;
+    // Fall back to default values in case all partition modes are rejected.
+    if (partition_none_allowed == 0 && do_square_split == 0 &&
+        partition_horz_allowed == 0 && partition_vert_allowed == 0) {
+      do_square_split = bsize_at_least_8x8;
+      partition_none_allowed = has_rows && has_cols;
+      partition_horz_allowed = has_cols && yss <= xss && bsize_at_least_8x8;
+      partition_vert_allowed = has_rows && xss <= yss && bsize_at_least_8x8;
     }
   }
 
@@ -3542,16 +3733,11 @@ static void encode_rd_sb_row(AV1_COMP *cpi, ThreadData *td,
   av1_zero_left_context(xd);
 
   // Reset delta for every tile
-  if (cm->delta_q_present_flag)
-    if (mi_row == tile_info->mi_row_start) xd->prev_qindex = cm->base_qindex;
-  if (cm->delta_lf_present_flag) {
-    if (mi_row == tile_info->mi_row_start) {
-      const int frame_lf_count =
-          av1_num_planes(cm) > 1 ? FRAME_LF_COUNT : FRAME_LF_COUNT - 2;
-      for (int lf_id = 0; lf_id < frame_lf_count; ++lf_id)
-        xd->prev_delta_lf[lf_id] = 0;
+  if (mi_row == tile_info->mi_row_start) {
+    if (cm->delta_q_present_flag) xd->current_qindex = cm->base_qindex;
+    if (cm->delta_lf_present_flag) {
+      av1_reset_loop_filter_delta(xd, av1_num_planes(cm));
     }
-    if (mi_row == tile_info->mi_row_start) xd->prev_delta_lf_from_base = 0;
   }
 
   // Code each SB in the row
@@ -3622,14 +3808,14 @@ static void encode_rd_sb_row(AV1_COMP *cpi, ThreadData *td,
 
       xd->delta_qindex = current_qindex - cm->base_qindex;
       set_offsets(cpi, tile_info, x, mi_row, mi_col, cm->seq_params.sb_size);
-      xd->mi[0]->current_q_index = current_qindex;
+      xd->mi[0]->current_qindex = current_qindex;
       av1_init_plane_quantizers(cpi, x, xd->mi[0]->segment_id);
       if (cpi->oxcf.deltaq_mode == DELTA_Q_LF) {
         int j, k;
         int lfmask = ~(cm->delta_lf_res - 1);
-        int current_delta_lf_from_base = offset_qindex / 2;
-        current_delta_lf_from_base =
-            ((current_delta_lf_from_base + cm->delta_lf_res / 2) & lfmask);
+        int delta_lf_from_base = offset_qindex / 2;
+        delta_lf_from_base =
+            ((delta_lf_from_base + cm->delta_lf_res / 2) & lfmask);
 
         // pre-set the delta lf for loop filter. Note that this value is set
         // before mi is assigned for each block in current superblock
@@ -3638,15 +3824,14 @@ static void encode_rd_sb_row(AV1_COMP *cpi, ThreadData *td,
           for (k = 0; k < AOMMIN(cm->seq_params.mib_size, cm->mi_cols - mi_col);
                k++) {
             cm->mi[(mi_row + j) * cm->mi_stride + (mi_col + k)]
-                .current_delta_lf_from_base = clamp(
-                current_delta_lf_from_base, -MAX_LOOP_FILTER, MAX_LOOP_FILTER);
+                .delta_lf_from_base =
+                clamp(delta_lf_from_base, -MAX_LOOP_FILTER, MAX_LOOP_FILTER);
             const int frame_lf_count =
                 av1_num_planes(cm) > 1 ? FRAME_LF_COUNT : FRAME_LF_COUNT - 2;
             for (int lf_id = 0; lf_id < frame_lf_count; ++lf_id) {
               cm->mi[(mi_row + j) * cm->mi_stride + (mi_col + k)]
-                  .curr_delta_lf[lf_id] =
-                  clamp(current_delta_lf_from_base, -MAX_LOOP_FILTER,
-                        MAX_LOOP_FILTER);
+                  .delta_lf[lf_id] =
+                  clamp(delta_lf_from_base, -MAX_LOOP_FILTER, MAX_LOOP_FILTER);
             }
           }
         }
@@ -3750,6 +3935,11 @@ static void encode_rd_sb_row(AV1_COMP *cpi, ThreadData *td,
                           pc_root, NULL);
       }
     }
+#if CONFIG_COLLECT_INTER_MODE_RD_STATS
+    if (cpi->sf.inter_mode_rd_model_estimation) {
+      av1_inter_mode_data_fit(x->rdmult);
+    }
+#endif
   }
 }
 
@@ -4204,7 +4394,7 @@ static void encode_frame_internal(AV1_COMP *cpi) {
   // Reset the flag.
   cpi->intrabc_used = 0;
   // Need to disable intrabc when superres is selected
-  if (!av1_superres_unscaled(cm)) {
+  if (av1_superres_scaled(cm)) {
     cm->allow_intrabc = 0;
   }
 
@@ -4291,12 +4481,16 @@ static void encode_frame_internal(AV1_COMP *cpi) {
     xd->qindex[i] = qindex;
     if (xd->lossless[i]) {
       cpi->optimize_seg_arr[i] = 0;
+      // The purpose of setting alt q as -255 for all lossless segments is to
+      // force the qindex of any block belonging to a lossless segment not to be
+      // reverted to non-zero (lossy) when sb level delta-q is also on.
+      cm->seg.feature_data[i][SEG_LVL_ALT_Q] = -255;
     } else {
       cpi->optimize_seg_arr[i] = cpi->optimize_speed_feature;
     }
   }
   cm->coded_lossless = is_coded_lossless(cm, xd);
-  cm->all_lossless = cm->coded_lossless && av1_superres_unscaled(cm);
+  cm->all_lossless = cm->coded_lossless && !av1_superres_scaled(cm);
 
   cm->tx_mode = select_tx_mode(cpi);
 
@@ -4488,6 +4682,14 @@ static void encode_frame_internal(AV1_COMP *cpi) {
       av1_encode_tiles_mt(cpi);
     else
       encode_tiles(cpi);
+
+#if CONFIG_COLLECT_INTER_MODE_RD_STATS
+#if INTER_MODE_RD_TEST
+    if (cpi->sf.inter_mode_rd_model_estimation) {
+      av1_inter_mode_data_show(cm);
+    }
+#endif
+#endif
 
     aom_usec_timer_mark(&emr_timer);
     cpi->time_encode_sb_row += aom_usec_timer_elapsed(&emr_timer);
@@ -4806,7 +5008,7 @@ static void encode_superblock(const AV1_COMP *const cpi, TileDataEnc *tile_data,
     // If there is at least one lossless segment, force the skip for intra
     // block to be 0, in order to avoid the segment_id to be changed by in
     // write_segment_id().
-    if (!cpi->common.seg.preskip_segid && cpi->common.seg.update_map &&
+    if (!cpi->common.seg.segid_preskip && cpi->common.seg.update_map &&
         cpi->has_lossless_segment)
       mbmi->skip = 0;
 
